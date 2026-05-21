@@ -17,9 +17,11 @@ session = HTTP(
     api_secret=API_SECRET
 )
 
-# Configurazione Griglia a 13 livelli (Espansa con Jolly finale)
+# Griglia originale a 13 livelli (Totale 180 LAB)
+# Il livello 1 (2 LAB) entra a mercato. I successivi 12 rimangono Limit.
 GRID_SIZES = [2, 2, 2, 2, 5, 7, 9, 11, 15, 20, 25, 30, 50] 
-TOTAL_EMERGENCY_SIZE = sum(GRID_SIZES) # 180.0 LAB
+SIZE_LIVELLO_1 = GRID_SIZES[0]        # 2 LAB (Ingresso istantaneo a mercato)
+RESTANTI_LIVELLI = GRID_SIZES[1:]     # I restanti 12 livelli per la fisarmonica
 
 # =====================================================================
 # FUNZIONI DI SUPPORTO PER GESTIONE ACCOUNT & ORDINI
@@ -49,39 +51,56 @@ def calcola_volatilta_ratio():
     return 0.73
 
 def aggiorna_tp_limit(size_posizione, quota_tp):
-    """Cancella i vecchi ordini e piazza il nuovo TP sul book come LIMIT."""
+    """Cancella i vecchi ordini di TP e piazza il nuovo TP sul book come LIMIT."""
     try:
-        # 1. Pulizia preventiva: cancella SOLO gli ordini di vendita (TP) 
-        # lasciando intatti gli ordini d'acquisto della griglia sottostante
+        # Pulizia preventiva: cancella solo gli ordini di vendita (TP)
+        # lasciando intatti gli ordini d'acquisto della griglia pendente
         session.cancel_all_orders(
             category="linear",
             symbol=SYMBOL
         )
         print("🧹 Vecchio ordine di TP rimosso dal book.")
         
-        # 2. Se abbiamo una posizione aperta, piazziamo il TP reale
         if size_posizione > 0:
             session.place_order(
                 category="linear",
                 symbol=SYMBOL,
                 side="Sell",                  # Direzione contraria per chiudere il Long
-                orderType="Limit",            # <--- MAKER FEE: Ordine Limit fermo sul book
+                orderType="Limit",            # MAKER FEE: Ordine Limit fermo sul book
                 qty=str(size_posizione),      # Vende tutta la size accumulata
                 price=str(round(quota_tp, 4)),# Prezzo di TP arrotondato
                 positionIdx=0,
-                reduceOnly=True               # <--- SICUREZZA: Esegue solo se riduce la posizione
+                reduceOnly=True               # SICUREZZA: Esegue solo se riduce la posizione
             )
             print(f"🎯 [MAKER] Nuovo TP Limit piazzato sul book a quota: {round(quota_tp, 4)} per {size_posizione} LAB")
     except Exception as e:
         print(f"❌ Errore aggiornamento TP Limit: {e}")
 
-def piazza_griglia_acquisto(prezzo_corrente, spaziatura):
-    """Piazza i livelli d'acquisto Limit sotto il prezzo corrente (Fisarmonica)."""
-    print(f"📐 Configurazione Griglia a Fisarmonica | Spaziatura Corrente: {spaziatura}%")
-    prezzo_riferimento = prezzo_corrente
+def apri_livello_1_a_mercato():
+    """Invia un ordine istantaneo a mercato per il primo livello da 2 LAB."""
+    try:
+        print(f"⚡ Inserimento istantaneo Livello 1 a MERCATO ({SIZE_LIVELLO_1} LAB)...")
+        order = session.place_order(
+            category="linear",
+            symbol=SYMBOL,
+            side="Buy",
+            orderType="Market",               # Entra subito senza aspettare
+            qty=str(SIZE_LIVELLO_1),
+            positionIdx=0
+        )
+        print("🟢 Livello 1 eseguito con successo.")
+        return True
+    except Exception as e:
+        print(f"❌ Errore ordine a mercato Livello 1: {e}")
+        return False
+
+def piazza_restante_griglia_limit(prezzo_riferimento, spaziatura):
+    """Piazza i restanti 12 livelli d'acquisto Limit a fisarmonica sotto il prezzo di ingresso."""
+    print(f"📐 Configurazione Griglia a Fisarmonica (12 livelli rimanenti) | Spaziatura: {spaziatura}%")
     
-    for i, size in enumerate(GRID_SIZES):
-        # Ogni livello si allontana in percentuale in base alla spaziatura calcolata
+    for i, size in enumerate(RESTANTI_LIVELLI):
+        # L'indice parte da 0, ma corrisponde al livello 2 effettivo della griglia originale
+        numero_livello = i + 2 
         prezzo_livello = prezzo_riferimento * (1 - (spaziatura * (i + 1)) / 100)
         try:
             session.place_order(
@@ -93,9 +112,9 @@ def piazza_griglia_acquisto(prezzo_corrente, spaziatura):
                 price=str(round(prezzo_livello, 4)),
                 positionIdx=0
             )
-            print(f"   ↳ Livello {i+1} piazzato: {size} LAB a {round(prezzo_livello, 4)}")
+            print(f"   ↳ Livello {numero_livello} piazzato: {size} LAB a {round(prezzo_livello, 4)}")
         except Exception as e:
-            print(f"   ❌ Impossibile piazzare livello {i+1} (Size: {size}): {e}")
+            print(f"   ❌ Impossibile piazzare livello {numero_livello} (Size: {size}): {e}")
 
 # =====================================================================
 # CICLO PRINCIPALE DEL BOT (CORE LOGIC)
@@ -112,13 +131,13 @@ while True:
         size_attuale, prezzo_medio = recupera_stato_posizione()
         ratio_volatilità = calcola_volatilta_ratio()
         
-        # 2. Rilevamento Cambio Stato (Inseguimento o Reset)
+        # 2. Rilevamento Cambio Stato (Inseguimento o Inizio Ciclo)
         if size_attuale != ultima_size_tracciata:
             print(f"\n🔄 Cambio size rilevato sul mercato: {ultima_size_tracciata} LAB ➔ {size_attuale} LAB")
             
             if size_attuale > 0:
-                # LA GRIGLIA HA ACCUMULATO (o è partito il primo livello)
-                # Calcola il TP adattandosi al nuovo prezzo medio di carico
+                # LA POSIZIONE È ATTIVA (È entrato il livello 1 a mercato o i successivi limit)
+                # Calcola il TP adattandosi al prezzo medio corrente
                 nuovo_target_tp = prezzo_medio * (1 + ratio_volatilità / 100)
                 
                 print(f"📊 [Posizione Attiva] Size: {size_attuale} LAB | Media Carico: {prezzo_medio}")
@@ -128,23 +147,30 @@ while True:
                 aggiorna_tp_limit(size_attuale, nuovo_target_tp)
                 
             else:
-                # LA POSIZIONE È STATA AZZERATA (Il TP Limit è stato preso!)
+                # LA POSIZIONE È A ZERO (O il bot è appena partito, o il TP Limit è stato preso!)
                 if ultima_size_tracciata > 0:
                     print("🎉 TARGET PRESO! Il TP Limit è stato eseguito come Maker. Ciclo chiuso in profitto.")
                 
-                print("🧹 Tabula rasa sul book. Reset degli ordini rimasti...")
+                print("🧹 Pulizia totale del book prima di iniziare il nuovo ciclo...")
                 try:
                     session.cancel_all_orders(category="linear", symbol=SYMBOL)
                 except:
                     pass
                 
-                # Recupera l'ultimo prezzo per stampare la nuova griglia di partenza
-                ticker = session.get_tickers(category="linear", symbol=SYMBOL)
-                prezzo_spot = float(ticker["result"]["list"][0]["lastPrice"])
+                # AZIONE AGGIORNATA: Entra subito a mercato con il livello 1
+                successo_ingresso = apri_livello_1_a_mercato()
                 
-                # Rigenera la rete a fisarmonica
-                piazza_griglia_acquisto(prezzo_spot, ratio_volatilità)
-            
+                if successo_ingresso:
+                    # Aspetta un istante per far registrare la posizione a Bybit
+                    time.sleep(2)
+                    size_nuova, prezzo_ingresso = recupera_stato_posizione()
+                    
+                    if size_nuova > 0:
+                        # Piazza i restanti 12 livelli condizionati SOTTO il prezzo di ingresso reale
+                        piazza_restante_griglia_limit(prezzo_ingresso, ratio_volatilità)
+                    else:
+                        print("⚠️ Posizione non rilevata subito dopo l'ordine a mercato. Riprovo nel prossimo ciclo.")
+                
             # Memorizza lo stato corrente per il prossimo controllo
             ultima_size_tracciata = size_attuale
             
@@ -154,7 +180,7 @@ while True:
                 target_corrente = prezzo_medio * (1 + ratio_volatilità / 100)
                 print(f"📊 [In ascolto...] Posizione: {size_attuale} LAB | Media: {prezzo_medio} | Target TP: {round(target_corrente, 4)} | Volatilità Ratio: {ratio_volatilità}", end="\r")
             else:
-                print("💤 In attesa che venga agganciato il primo livello della griglia...", end="\r")
+                print("💤 Inizializzazione in corso...", end="\r")
 
     except Exception as e:
         print(f"\n⚠️ Errore nel ciclo principale: {e}")
