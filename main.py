@@ -22,7 +22,7 @@ RESTANTI_LIVELLI = GRID_SIZES[1:]
 ratio_volatilità = 0.73
 
 # =====================================================================
-# FUNZIONI CHIRURGICHE
+# FUNZIONI
 # =====================================================================
 
 def recupera_stato_posizione():
@@ -35,12 +35,10 @@ def recupera_stato_posizione():
     return 0.0, 0.0
 
 def aggiorna_tp_limit_chirurgico(size_posizione, quota_tp):
-    """Cancella solo gli ordini di VENDITA (TP) e ne piazza uno nuovo."""
+    """Cancella solo il TP (lato Sell) e ne piazza uno nuovo."""
     try:
-        # Recupera tutti gli ordini aperti
         ordini = session.get_open_orders(category="linear", symbol=SYMBOL)["result"]["list"]
         for o in ordini:
-            # Cancella SOLO se è un ordine di VENDITA (il TP)
             if o["side"] == "Sell":
                 session.cancel_order(category="linear", symbol=SYMBOL, orderId=o["orderId"])
                 print(f"🧹 TP precedente rimosso.")
@@ -60,40 +58,44 @@ def aggiorna_tp_limit_chirurgico(size_posizione, quota_tp):
 # =====================================================================
 
 ultima_size_tracciata = -1.0 
-
-print("🚀 BOT IN ESECUZIONE (Logica Chirurgica)...")
+print("🚀 BOT IN ESECUZIONE (Logica di Ripristino Forzato)...")
 
 while True:
     try:
         size_attuale, prezzo_medio = recupera_stato_posizione()
         
-        # 1. Se la size cambia, aggiorna SOLO il TP
+        # 1. Se la size cambia mentre siamo già in gioco (es. agganciato un nuovo livello)
         if size_attuale > 0 and size_attuale != ultima_size_tracciata:
             nuovo_tp = prezzo_medio * (1 + ratio_volatilità / 100)
             aggiorna_tp_limit_chirurgico(size_attuale, nuovo_tp)
             ultima_size_tracciata = size_attuale
             
-        # 2. Se siamo a zero, resetta tutto
+        # 2. Se siamo a zero, resetta e piazza TUTTO subito
         elif size_attuale == 0 and ultima_size_tracciata != 0:
-            print("🧹 Pulizia completa per nuovo ciclo.")
+            print("🧹 Reset completo: piazzamento massivo in corso...")
             try: session.cancel_all_orders(category="linear", symbol=SYMBOL)
             except: pass
             
-            # Entrata
+            # Entrata a mercato
             session.place_order(category="linear", symbol=SYMBOL, side="Buy", 
                                 orderType="Market", qty=str(SIZE_LIVELLO_1), positionIdx=0)
             
-            time.sleep(3)
+            time.sleep(3) # Attesa esecuzione
             s_nuova, p_ingresso = recupera_stato_posizione()
             
-            # Piazza la griglia di acquisto (che non verrà toccata dai futuri aggiornamenti TP)
-            for i, size in enumerate(RESTANTI_LIVELLI):
-                prezzo_livello = p_ingresso * (1 - (ratio_volatilità * (i + 1)) / 100)
-                session.place_order(category="linear", symbol=SYMBOL, side="Buy", 
-                                    orderType="Limit", qty=str(size), price=str(round(prezzo_livello, 4)), positionIdx=0)
-            
-            ultima_size_tracciata = s_nuova
-            print("✅ Griglia di acquisto piazzata. Pronti.")
+            if s_nuova > 0:
+                # Piazza griglia acquisto
+                for i, size in enumerate(RESTANTI_LIVELLI):
+                    prezzo_livello = p_ingresso * (1 - (ratio_volatilità * (i + 1)) / 100)
+                    session.place_order(category="linear", symbol=SYMBOL, side="Buy", 
+                                        orderType="Limit", qty=str(size), price=str(round(prezzo_livello, 4)), positionIdx=0)
+                
+                # Piazza TP iniziale FORZATO
+                tp_iniziale = p_ingresso * (1 + ratio_volatilità / 100)
+                aggiorna_tp_limit_chirurgico(s_nuova, tp_iniziale)
+                
+                ultima_size_tracciata = s_nuova
+                print("✅ Ciclo ripartito: Griglia e TP inseriti correttamente.")
 
         time.sleep(3)
     except Exception as e:
