@@ -19,6 +19,7 @@ TOTAL_EMERGENCY_SIZE = sum(GRID_SIZES) # Calcola automaticamente 180.0 LAB
 # NOTA: testnet=False è necessario per la nuova modalità "Demo Trading" del sito principale
 session = HTTP(
     testnet=False,
+    demo=True,
     api_key=API_KEY,
     api_secret=API_SECRET
 )
