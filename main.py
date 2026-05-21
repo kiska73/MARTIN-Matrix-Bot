@@ -1,21 +1,24 @@
 import time
 import math
+import os  # <--- Fondamentale per leggere le variabili d'ambiente di Render
 from pybit.unified_trading import HTTP
 
 # =====================================================================
-# CONFIGURAZIONE API CREDENTIALS (DEMO / TESTNET)
+# CONFIGURAZIONE API CREDENTIALS (PROTETTE DA ENVIRONMENT VARIABLES)
 # =====================================================================
-API_KEY = "Qd7sfSmeoT5DzfqX4w"
-API_SECRET = "S8kzjv5ujlUTcYh5GY5H7m4yTDhymPNSapMT"
-SYMBOL = "LABUSDT"          # Cambialo se necessario con il ticker esatto di Testnet
+# Il bot pescherà le chiavi in automatico dalla memoria sicura di Render
+API_KEY = os.environ.get("BYBIT_API_KEY")
+API_SECRET = os.environ.get("BYBIT_API_SECRET")
+SYMBOL = "LABUSDT"          
 
 # Griglia a 13 livelli espansa con ordini da 25, 30 e il Jolly da 50 LAB
 GRID_SIZES = [2, 2, 2, 2, 5, 7, 9, 11, 15, 20, 25, 30, 50] 
 TOTAL_EMERGENCY_SIZE = sum(GRID_SIZES) # Calcola automaticamente 180.0 LAB
 
-# Connessione nativa ai server di Bybit Testnet
+# Connessione nativa ai server di Bybit
+# NOTA: testnet=False è necessario per la nuova modalità "Demo Trading" del sito principale
 session = HTTP(
-    testnet=True,
+    testnet=False,
     api_key=API_KEY,
     api_secret=API_SECRET
 )
@@ -217,8 +220,8 @@ def run_bot():
                 
                 dynamic_tp_target = avg_price * (1 + tp_percent)
                 
-                # Stampa dinamica a schermo per monitorare i dati in tempo reale senza intasare il terminale
-                print(f"📊 [Posizione: {position_size} LAB] | [Media: {avg_price:.4f}] | [{regime_name}] | [Target TP: {dynamic_tp_target:.4f}]", end="\r")
+                # Stampa ottimizzata per i log persistenti del Cloud (senza end="\r")
+                print(f"📊 [Posizione: {position_size} LAB] | [Media: {avg_price:.4f}] | [{regime_name}] | [Target TP: {dynamic_tp_target:.4f}]")
                 
                 if market_price >= dynamic_tp_target:
                     print(f"\n💰 Target {regime_name} (+{tp_percent*100}%) Preso! Liquidazione totale della griglia.")
