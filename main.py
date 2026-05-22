@@ -20,7 +20,7 @@ session = HTTP(
 
 GRID_SIZES_STANDARD = [2, 2, 2, 2, 5, 7, 9, 11, 15, 20, 25, 30, 50]
 
-COOLDOWN_TRADE = 10  # secondi pausa tra un trade e l'altro
+COOLDOWN_TRADE = 10  # secondi pausa tra un trade e il successivo
 
 # =====================================================================
 # FUNZIONI DI SUPPORTO
@@ -49,15 +49,15 @@ def get_config_volatilita():
 
         vol_avg = sum(ranges) / len(ranges)
 
-        # Se volatilità molto alta usa griglia mini
+        # Modalità difensiva se volatilità molto alta
         if vol_last > (vol_avg * 1.5):
-            print("⚠️ Volatilità elevata rilevata -> modalità difensiva")
+            print("⚠️ Alta volatilità -> modalità difensiva")
             return [2] * 13
 
         return GRID_SIZES_STANDARD
 
     except Exception as e:
-        print(f"Errore volatilità: {e}")
+        print(f"⚠️ Errore volatilità: {e}")
         return GRID_SIZES_STANDARD
 
 
@@ -75,13 +75,13 @@ def get_bollinger_banda_inf_4h():
         media = sum(closes) / len(closes)
 
         std_dev = (
-            sum([(x - media) ** 2 for x in closes]) / len(closes)
+            sum((x - media) ** 2 for x in closes) / len(closes)
         ) ** 0.5
 
         return media - (2 * std_dev)
 
     except Exception as e:
-        print(f"Errore Bollinger: {e}")
+        print(f"⚠️ Errore Bollinger: {e}")
         return 0.0
 
 
@@ -92,12 +92,11 @@ def recupera_stato_posizione():
             symbol=SYMBOL
         )
 
-        if (
-            response
-            and "list" in response["result"]
-            and len(response["result"]["list"]) > 0
-        ):
-            pos = response["result"]["list"][0]
+        positions = response["result"]["list"]
+
+        if len(positions) > 0:
+
+            pos = positions[0]
 
             size = float(pos.get("size", 0))
             avg_price = float(pos.get("avgPrice", 0))
@@ -105,21 +104,26 @@ def recupera_stato_posizione():
             return size, avg_price
 
     except Exception as e:
-        print(f"Errore posizione: {e}")
+        print(f"⚠️ Errore posizione: {e}")
 
     return 0.0, 0.0
 
 
 def aggiorna_tp_limit_chirurgico(size, tp):
+
+    # Cancella solo TP reduceOnly
     try:
         ordini = session.get_open_orders(
             category="linear",
             symbol=SYMBOL
         )["result"]["list"]
 
-        # Cancella vecchi TP
         for o in ordini:
-            if o["side"] == "Sell":
+
+            if (
+                o["side"] == "Sell"
+                and o.get("reduceOnly") is True
+            ):
                 session.cancel_order(
                     category="linear",
                     symbol=SYMBOL,
@@ -127,11 +131,12 @@ def aggiorna_tp_limit_chirurgico(size, tp):
                 )
 
     except Exception as e:
-        print(f"Errore cancellazione TP: {e}")
+        print(f"⚠️ Errore cancellazione TP: {e}")
 
     # Nuovo TP
     if size > 0:
         try:
+
             session.place_order(
                 category="linear",
                 symbol=SYMBOL,
@@ -146,7 +151,7 @@ def aggiorna_tp_limit_chirurgico(size, tp):
             print(f"🎯 TP aggiornato -> {round(tp, 4)}")
 
         except Exception as e:
-            print(f"Errore nuovo TP: {e}")
+            print(f"⚠️ Errore nuovo TP: {e}")
 
 
 # =====================================================================
@@ -163,8 +168,9 @@ ultimo_trade_time = 0
 # =====================================================================
 
 print("🚀 BOT LIVE AVVIATO")
-print("🛡️ SL Bollinger 4H + Paracadute -60%")
-print(f"⏳ Cooldown trade: {COOLDOWN_TRADE} secondi")
+print("📈 Strategia Grid + Mediazione")
+print("🛡️ SL Bollinger 4H + Hard SL -60%")
+print(f"⏳ Cooldown attivo: {COOLDOWN_TRADE}s")
 
 # =====================================================================
 # CICLO PRINCIPALE
@@ -185,7 +191,9 @@ while True:
             symbol=SYMBOL
         )
 
-        prezzo = float(ticker["result"]["list"][0]["lastPrice"])
+        prezzo = float(
+            ticker["result"]["list"][0]["lastPrice"]
+        )
 
         # ==============================================================
         # 1. STOP LOSS DINAMICO
@@ -200,7 +208,8 @@ while True:
                 limit=2
             )
 
-            candela_chiusa = klines["result"]["list"][1]
+            # Candela chiusa più recente
+            candela_chiusa = klines["result"]["list"][0]
 
             close_candela = float(candela_chiusa[4])
             low_candela = float(candela_chiusa[3])
@@ -209,20 +218,17 @@ while True:
 
             pnl = (prezzo / prezzo_ingresso) - 1
 
-            # SL dinamico
-            sl_trigger = (
+            sl_bollinger = (
                 close_candela < banda_inf
                 and prezzo <= low_candela
             )
 
-            # Paracadute emergenza
             hard_sl = pnl <= -0.60
 
-            if sl_trigger or hard_sl:
+            if sl_bollinger or hard_sl:
 
                 print(
-                    f"🚨 SL INNESCATO -> Prezzo: {prezzo} | "
-                    f"Low: {low_candela}"
+                    f"🚨 STOP LOSS -> Prezzo {prezzo}"
                 )
 
                 session.place_order(
@@ -235,22 +241,29 @@ while True:
                     reduceOnly=True
                 )
 
-                # Avvia cooldown
                 ultimo_trade_time = time.time()
 
                 ultima_size = -1.0
                 prezzo_ingresso = 0.0
 
+                time.sleep(2)
+
                 continue
 
         # ==============================================================
-        # 2. RESET + NUOVO CICLO OPERATIVO
+        # 2. NUOVO CICLO OPERATIVO
         # ==============================================================
 
         elif size == 0 and ultima_size != 0:
 
-            # Cooldown tra trade
-            tempo_passato = time.time() - ultimo_trade_time
+            # Posizione appena chiusa (TP o SL)
+            if ultima_size > 0:
+                ultimo_trade_time = time.time()
+
+            # Cooldown
+            tempo_passato = (
+                time.time() - ultimo_trade_time
+            )
 
             if tempo_passato < COOLDOWN_TRADE:
 
@@ -259,16 +272,18 @@ while True:
                     1
                 )
 
-                print(f"⏳ Cooldown attivo -> {attesa}s")
+                print(
+                    f"⏳ Cooldown attivo -> {attesa}s"
+                )
 
                 time.sleep(1)
                 continue
 
-            print("🧹 Nessuna posizione -> avvio nuova griglia")
+            print("🧹 Nuovo ciclo operativo")
 
             lista_sizes = get_config_volatilita()
 
-            # Cancella eventuali ordini residui
+            # Cancella ordini residui
             try:
                 session.cancel_all_orders(
                     category="linear",
@@ -278,7 +293,7 @@ while True:
                 pass
 
             # ==========================================================
-            # PRIMO ORDINE MARKET
+            # ENTRY MARKET
             # ==========================================================
 
             session.place_order(
@@ -290,8 +305,9 @@ while True:
                 positionIdx=0
             )
 
-            # Aggiorna timestamp trade
             ultimo_trade_time = time.time()
+
+            print("🟢 Entry market inviata")
 
             time.sleep(2)
 
@@ -301,7 +317,9 @@ while True:
 
                 prezzo_ingresso = p_ing
 
-                print(f"✅ Entry iniziale @ {p_ing}")
+                print(
+                    f"✅ Posizione aperta @ {p_ing}"
+                )
 
                 # ======================================================
                 # CREA GRIGLIA
@@ -324,7 +342,7 @@ while True:
                     )
 
                     print(
-                        f"📌 Buy Limit {lista_sizes[i]} "
+                        f"📌 Buy limit {lista_sizes[i]} "
                         f"@ {round(prezzo_livello, 4)}"
                     )
 
@@ -337,7 +355,7 @@ while True:
                 ultima_size = s_nuova
 
         # ==============================================================
-        # 3. AGGIORNAMENTO TP
+        # 3. AGGIORNAMENTO TP DINAMICO
         # ==============================================================
 
         if size > 0 and size != ultima_size:
@@ -352,8 +370,8 @@ while True:
             ultima_size = size
 
             print(
-                f"🔄 Size aggiornata -> {size} | "
-                f"Avg: {avg_price}"
+                f"🔄 Nuova media: {avg_price} | "
+                f"Size: {size}"
             )
 
         # ==============================================================
