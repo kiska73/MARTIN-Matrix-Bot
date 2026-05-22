@@ -108,12 +108,12 @@ while True:
                 for i in range(1, len(lista_sizes)):
                     prezzo_livello = p_ing * (1 - (1.0 * i) / 100)
                     session.place_order(category="linear", symbol=SYMBOL, side="Buy", orderType="Limit", qty=str(lista_sizes[i]), price=str(round(prezzo_livello, 4)), positionIdx=0)
-                aggiorna_tp_limit_chirurgico(s_nuova, p_ing * 1.01)
+                aggiorna_tp_limit_chirurgico(s_nuova, p_ing * 1.006)
                 ultima_size = s_nuova
 
         # 3. Aggiorna TP
         if size > 0 and size != ultima_size:
-            aggiorna_tp_limit_chirurgico(size, avg_price * 1.01)
+            aggiorna_tp_limit_chirurgico(size, avg_price * 1.006)
             ultima_size = size
 
         time.sleep(3)
