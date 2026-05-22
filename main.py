@@ -9,10 +9,10 @@ API_KEY = os.environ.get("BYBIT_API_KEY")
 API_SECRET = os.environ.get("BYBIT_API_SECRET")
 SYMBOL = "LABUSDT"
 
+# Inizializzazione sessione
 session = HTTP(testnet=False, demo=False, api_key=API_KEY, api_secret=API_SECRET)
 
-# Griglia ottimizzata (più leggera per il margine)
-GRID_SIZES_STANDARD = [1, 1, 1, 2, 3, 5, 7, 9, 11, 15, 20, 25, 30]
+GRID_SIZES_STANDARD = [2, 2, 2, 2, 5, 7, 9, 11, 15, 20, 25, 30, 50]
 
 # =====================================================================
 # FUNZIONI DI SUPPORTO
@@ -63,8 +63,9 @@ def aggiorna_tp_limit_chirurgico(size, tp):
 
 ultima_size = -1.0
 prezzo_ingresso = 0.0
+ultimo_trade_time = 0 
 
-print("🚀 BOT LIVE AVVIATO: Bollinger SL su Minimo 4H + Volatilità + Paracadute 60% + Pausa 10s.")
+print("🚀 BOT LIVE AVVIATO: Con pausa di sicurezza 10s.")
 
 while True:
     try:
@@ -72,9 +73,8 @@ while True:
         ticker = session.get_tickers(category="linear", symbol=SYMBOL)
         prezzo = float(ticker["result"]["list"][0]["lastPrice"])
         
-        # 1. GESTIONE POSIZIONE APERTA
+        # 1. SL DINAMICO
         if size > 0 and prezzo_ingresso > 0:
-            # Analisi per SL su candela chiusa
             klines = session.get_kline(category="linear", symbol=SYMBOL, interval="240", limit=2)
             candela_chiusa = klines["result"]["list"][1]
             close_candela = float(candela_chiusa[4])
@@ -82,32 +82,29 @@ while True:
             banda_inf = get_bollinger_banda_inf_4h()
             pnl = (prezzo / prezzo_ingresso) - 1
             
-            # SL su minimo se chiude sotto banda O Paracadute estremo
             if (close_candela < banda_inf and prezzo <= low_candela) or pnl <= -0.60:
-                print(f"🚨 SL INNESCATO (Prezzo {prezzo} rotto minimo {low_candela})")
+                print(f"🚨 SL INNESCATO. Pausa post-trade avviata.")
                 session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Market", qty=str(size), positionIdx=0, reduceOnly=True)
-                
-                print("⏳ Trade chiuso. Pausa tattica di 10 secondi...")
-                time.sleep(10)
-                
                 ultima_size = -1.0
                 prezzo_ingresso = 0.0
+                ultimo_trade_time = time.time()  # Registra il timestamp
+                time.sleep(10) # Pausa forzata di 10 secondi dopo lo stop
                 continue
 
         # 2. RESET E PIAZZAMENTO GRIGLIA
         elif size == 0 and ultima_size != 0:
-            # Se la size è diventata 0, significa che siamo appena usciti (TP o SL)
-            # La pausa avviene solo se prima avevamo una posizione attiva
-            if ultima_size > 0:
-                print("🏁 Posizione chiusa. Pausa di 10 secondi...")
-                time.sleep(10)
-            
+            # Controllo cooldown di 10 secondi
+            if (time.time() - ultimo_trade_time) < 10:
+                time.sleep(2)
+                continue
+                
             print("🧹 Analisi 4H in corso...")
             lista_sizes = get_config_volatilita()
             try: session.cancel_all_orders(category="linear", symbol=SYMBOL)
             except: pass
             
             session.place_order(category="linear", symbol=SYMBOL, side="Buy", orderType="Market", qty=str(lista_sizes[0]), positionIdx=0)
+            ultimo_trade_time = time.time() # Registra il timestamp
             time.sleep(2)
             
             s_nuova, p_ing = recupera_stato_posizione()
