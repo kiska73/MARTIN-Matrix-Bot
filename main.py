@@ -20,14 +20,16 @@ session = HTTP(
 
 GRID_SIZES_STANDARD = [2, 2, 2, 2, 5, 7, 9, 11, 15, 20, 25, 30, 50]
 
-COOLDOWN_TRADE = 10  # secondi pausa tra un trade e il successivo
+COOLDOWN_TRADE = 10  # secondi
 
 # =====================================================================
-# FUNZIONI DI SUPPORTO
+# FUNZIONI SUPPORTO
 # =====================================================================
 
 def get_config_volatilita():
+
     try:
+
         klines = session.get_kline(
             category="linear",
             symbol=SYMBOL,
@@ -49,20 +51,26 @@ def get_config_volatilita():
 
         vol_avg = sum(ranges) / len(ranges)
 
-        # Modalità difensiva se volatilità molto alta
+        # modalità difensiva
         if vol_last > (vol_avg * 1.5):
-            print("⚠️ Alta volatilità -> modalità difensiva")
+
+            print("⚠️ Alta volatilità -> mini grid")
+
             return [2] * 13
 
         return GRID_SIZES_STANDARD
 
     except Exception as e:
+
         print(f"⚠️ Errore volatilità: {e}")
+
         return GRID_SIZES_STANDARD
 
 
 def get_bollinger_banda_inf_4h():
+
     try:
+
         klines = session.get_kline(
             category="linear",
             symbol=SYMBOL,
@@ -70,23 +78,31 @@ def get_bollinger_banda_inf_4h():
             limit=20
         )
 
-        closes = [float(k[4]) for k in klines["result"]["list"]]
+        closes = [
+            float(k[4])
+            for k in klines["result"]["list"]
+        ]
 
         media = sum(closes) / len(closes)
 
         std_dev = (
-            sum((x - media) ** 2 for x in closes) / len(closes)
+            sum((x - media) ** 2 for x in closes)
+            / len(closes)
         ) ** 0.5
 
         return media - (2 * std_dev)
 
     except Exception as e:
+
         print(f"⚠️ Errore Bollinger: {e}")
+
         return 0.0
 
 
 def recupera_stato_posizione():
+
     try:
+
         response = session.get_positions(
             category="linear",
             symbol=SYMBOL
@@ -104,6 +120,7 @@ def recupera_stato_posizione():
             return size, avg_price
 
     except Exception as e:
+
         print(f"⚠️ Errore posizione: {e}")
 
     return 0.0, 0.0
@@ -111,8 +128,9 @@ def recupera_stato_posizione():
 
 def aggiorna_tp_limit_chirurgico(size, tp):
 
-    # Cancella solo TP reduceOnly
+    # cancella vecchi TP
     try:
+
         ordini = session.get_open_orders(
             category="linear",
             symbol=SYMBOL
@@ -124,6 +142,7 @@ def aggiorna_tp_limit_chirurgico(size, tp):
                 o["side"] == "Sell"
                 and o.get("reduceOnly") is True
             ):
+
                 session.cancel_order(
                     category="linear",
                     symbol=SYMBOL,
@@ -131,11 +150,13 @@ def aggiorna_tp_limit_chirurgico(size, tp):
                 )
 
     except Exception as e:
+
         print(f"⚠️ Errore cancellazione TP: {e}")
 
-    # Nuovo TP
-    if size > 0:
-        try:
+    # crea nuovo TP
+    try:
+
+        if size > 0:
 
             session.place_order(
                 category="linear",
@@ -150,12 +171,13 @@ def aggiorna_tp_limit_chirurgico(size, tp):
 
             print(f"🎯 TP aggiornato -> {round(tp, 4)}")
 
-        except Exception as e:
-            print(f"⚠️ Errore nuovo TP: {e}")
+    except Exception as e:
+
+        print(f"⚠️ Errore nuovo TP: {e}")
 
 
 # =====================================================================
-# VARIABILI STATO
+# VARIABILI GLOBALI
 # =====================================================================
 
 ultima_size = -1.0
@@ -173,7 +195,7 @@ print("🛡️ SL Bollinger 4H + Hard SL -60%")
 print(f"⏳ Cooldown attivo: {COOLDOWN_TRADE}s")
 
 # =====================================================================
-# CICLO PRINCIPALE
+# LOOP PRINCIPALE
 # =====================================================================
 
 while True:
@@ -196,7 +218,7 @@ while True:
         )
 
         # ==============================================================
-        # 1. STOP LOSS DINAMICO
+        # STOP LOSS DINAMICO
         # ==============================================================
 
         if size > 0 and prezzo_ingresso > 0:
@@ -208,10 +230,10 @@ while True:
                 limit=2
             )
 
-            # Candela chiusa più recente
             candela_chiusa = klines["result"]["list"][0]
 
             close_candela = float(candela_chiusa[4])
+
             low_candela = float(candela_chiusa[3])
 
             banda_inf = get_bollinger_banda_inf_4h()
@@ -228,7 +250,7 @@ while True:
             if sl_bollinger or hard_sl:
 
                 print(
-                    f"🚨 STOP LOSS -> Prezzo {prezzo}"
+                    f"🚨 STOP LOSS -> prezzo {prezzo}"
                 )
 
                 session.place_order(
@@ -243,7 +265,7 @@ while True:
 
                 ultimo_trade_time = time.time()
 
-                ultima_size = -1.0
+                ultima_size = 0
                 prezzo_ingresso = 0.0
 
                 time.sleep(2)
@@ -251,16 +273,25 @@ while True:
                 continue
 
         # ==============================================================
-        # 2. NUOVO CICLO OPERATIVO
+        # POSIZIONE APPENA CHIUSA
         # ==============================================================
 
-        elif size == 0 and ultima_size != 0:
+        elif size == 0 and ultima_size > 0:
 
-            # Posizione appena chiusa (TP o SL)
-            if ultima_size > 0:
-                ultimo_trade_time = time.time()
+            print("✅ Posizione chiusa")
 
-            # Cooldown
+            ultimo_trade_time = time.time()
+
+            ultima_size = 0
+
+            continue
+
+        # ==============================================================
+        # COOLDOWN
+        # ==============================================================
+
+        elif size == 0 and ultima_size == 0:
+
             tempo_passato = (
                 time.time() - ultimo_trade_time
             )
@@ -277,18 +308,21 @@ while True:
                 )
 
                 time.sleep(1)
+
                 continue
 
-            print("🧹 Nuovo ciclo operativo")
+            print("🧹 Avvio nuova griglia")
 
             lista_sizes = get_config_volatilita()
 
-            # Cancella ordini residui
+            # cancella ordini residui
             try:
+
                 session.cancel_all_orders(
                     category="linear",
                     symbol=SYMBOL
                 )
+
             except:
                 pass
 
@@ -305,8 +339,6 @@ while True:
                 positionIdx=0
             )
 
-            ultimo_trade_time = time.time()
-
             print("🟢 Entry market inviata")
 
             time.sleep(2)
@@ -318,7 +350,7 @@ while True:
                 prezzo_ingresso = p_ing
 
                 print(
-                    f"✅ Posizione aperta @ {p_ing}"
+                    f"✅ Entry iniziale @ {p_ing}"
                 )
 
                 # ======================================================
@@ -342,11 +374,12 @@ while True:
                     )
 
                     print(
-                        f"📌 Buy limit {lista_sizes[i]} "
-                        f"@ {round(prezzo_livello, 4)}"
+                        f"📌 Buy Limit "
+                        f"{lista_sizes[i]} @ "
+                        f"{round(prezzo_livello, 4)}"
                     )
 
-                # Primo TP
+                # primo TP
                 aggiorna_tp_limit_chirurgico(
                     s_nuova,
                     p_ing * 1.007
@@ -355,7 +388,7 @@ while True:
                 ultima_size = s_nuova
 
         # ==============================================================
-        # 3. AGGIORNAMENTO TP DINAMICO
+        # AGGIORNA TP SE CAMBIA SIZE
         # ==============================================================
 
         if size > 0 and size != ultima_size:
@@ -370,8 +403,8 @@ while True:
             ultima_size = size
 
             print(
-                f"🔄 Nuova media: {avg_price} | "
-                f"Size: {size}"
+                f"🔄 Size aggiornata -> "
+                f"{size} | Avg: {avg_price}"
             )
 
         # ==============================================================
