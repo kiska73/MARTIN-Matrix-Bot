@@ -9,7 +9,7 @@ API_KEY = os.environ.get("BYBIT_API_KEY")
 API_SECRET = os.environ.get("BYBIT_API_SECRET")
 SYMBOL = "LABUSDT"
 
-session = HTTP(testnet=False, demo=True, api_key=API_KEY, api_secret=API_SECRET)
+session = HTTP(testnet=False, demo=False, api_key=API_KEY, api_secret=API_SECRET)
 
 GRID_SIZES_STANDARD = [2, 2, 2, 2, 5, 7, 9, 11, 15, 20, 25, 30, 50]
 
