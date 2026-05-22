@@ -83,7 +83,7 @@ while True:
         if size > 0 and prezzo_ingresso > 0:
             banda_inf = get_bollinger_banda_inf_4h()
             pnl = (prezzo / prezzo_ingresso) - 1
-            if prezzo < banda_inf or pnl <= -0.50:
+            if prezzo < banda_inf or pnl <= -0.60:
                 print(f"🚨 SL DINAMICO INNESCATO (Prezzo: {prezzo} < Banda: {round(banda_inf, 4)} o PnL: {round(pnl, 2)})")
                 session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Market", qty=str(size), positionIdx=0, reduceOnly=True)
                 ultima_size = -1.0
@@ -108,12 +108,12 @@ while True:
                 for i in range(1, len(lista_sizes)):
                     prezzo_livello = p_ing * (1 - (1.2 * i) / 100)
                     session.place_order(category="linear", symbol=SYMBOL, side="Buy", orderType="Limit", qty=str(lista_sizes[i]), price=str(round(prezzo_livello, 4)), positionIdx=0)
-                aggiorna_tp_limit_chirurgico(s_nuova, p_ing * 1.006)
+                aggiorna_tp_limit_chirurgico(s_nuova, p_ing * 1.007)
                 ultima_size = s_nuova
 
         # 3. Aggiorna TP
         if size > 0 and size != ultima_size:
-            aggiorna_tp_limit_chirurgico(size, avg_price * 1.006)
+            aggiorna_tp_limit_chirurgico(size, avg_price * 1.007)
             ultima_size = size
 
         time.sleep(3)
