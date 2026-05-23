@@ -78,7 +78,7 @@ def set_tp(size, avg):
             side="Sell",
             orderType="Limit",
             qty=str(size),
-            price=str(round(avg * 1.008, 4)),
+            price=str(round(avg * 1.009, 4)),
             positionIdx=0,
             reduceOnly=True
         )
