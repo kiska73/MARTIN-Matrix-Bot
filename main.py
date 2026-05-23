@@ -2,10 +2,10 @@ import os
 import time
 import pandas as pd
 from pybit.unified_trading import HTTP
-from datetime import datetime
+from datetime import datetime, timezone
 
 # ==========================================================
-# CONFIG MASTER + MODALITÀ VOLATILITÀ + FILTRO SICUREZZA
+# CONFIG
 # ==========================================================
 API_KEY = os.environ.get("BYBIT_API_KEY")
 API_SECRET = os.environ.get("BYBIT_API_SECRET")
@@ -15,14 +15,12 @@ session = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
 
 # ==================== MODALITÀ ====================
 current_mode = "AGGRESSIVE"
-pause_until_next_candle = False  # Flag di sospensione
+pause_until_next_candle = False
 
-# Modalità Aggressiva
 AGGRESSIVE_GRID = [2, 2, 2, 3, 5, 7, 9, 11, 15, 20, 30, 45]
 AGGRESSIVE_TP = 0.90
 AGGRESSIVE_SPACING = 1.20
 
-# Modalità Conservativa
 CONSERVATIVE_QTY = 3
 CONSERVATIVE_LEVELS = 20
 CONSERVATIVE_SPACING = 1.50
@@ -31,6 +29,7 @@ CONSERVATIVE_TP = 1.20
 COOLDOWN = 18
 last_candle_ts = 0
 last_trade_time = 0
+last_checked_candle = 0   # Per evitare doppi check
 
 def get_current_price():
     try:
@@ -59,14 +58,25 @@ def get_volatility_data(symbol):
             'bb_width': round(bb_width_percent, 2),
             'candle_low': round(df['low'].iloc[-1], 4),
             'lower_band': round(lower_band.iloc[-1], 4),
-            'candle_close_time': df['ts'].iloc[-1] / 1000 + 14400
         }
     except Exception as e:
-        print(f"Errore Volatilità: {e}")
+        print(f"Errore Kline: {e}")
         return None
 
 
-print("🚀 BOT MASTER + FILTRO SICUREZZA (No Entry vicino Lower Band)")
+def should_check_candle():
+    """Controlla SOLO una volta intorno ai +5 / +12 secondi dopo chiusura candela 4H"""
+    now_utc = datetime.now(timezone.utc)
+    minute = now_utc.minute
+    second = now_utc.second
+    
+    # Chiusura alle ore: 00, 04, 08, 12, 16, 20
+    if minute == 0 and 5 <= second <= 12:        # Solo questa finestra stretta
+        return True
+    return False
+
+
+print("🚀 BOT MASTER - Controllo UNA sola volta a +5 secondi dopo chiusura 4H")
 
 while True:
     try:
@@ -81,26 +91,25 @@ while True:
         tp_orders = [o for o in active_orders if o["side"] == "Sell" and o["orderType"] == "Limit"]
         sl_orders = [o for o in active_orders if o.get("triggerPrice")]
 
-        # ==================== VOLATILITÀ & DECISIONI ====================
-        vol_data = get_volatility_data(SYMBOL)
-        
-        if vol_data and vol_data['ts'] != last_candle_ts:
-            if now > vol_data['candle_close_time'] + 6:
-                bb_width = vol_data['bb_width']
-                lower_band = vol_data['lower_band']
-                
-                # Decidi modalità
-                new_mode = "CONSERVATIVE" if bb_width > 30 else "AGGRESSIVE"
+        # ==================== CONTROLLO UNA SOLA VOLTA ALLA CHIUSURA ====================
+        if should_check_candle():
+            vol_data = get_volatility_data(SYMBOL)
+            
+            if vol_data and vol_data['ts'] != last_candle_ts:
+                print(f"📌 Candela 4H chiusa rilevata → {datetime.now().strftime('%H:%M:%S')}")
+
+                # Cambio modalità
+                new_mode = "CONSERVATIVE" if vol_data['bb_width'] > 30 else "AGGRESSIVE"
                 if new_mode != current_mode:
-                    print(f"🔄 CAMBIO MODALITÀ → {new_mode} (BB Width: {bb_width}%)")
+                    print(f"🔄 CAMBIO MODALITÀ → {new_mode} (BB Width: {vol_data['bb_width']}%)")
                     current_mode = new_mode
 
-                # === FILTRO SICUREZZA: Vicino o sotto Lower Band? ===
+                # Filtro Sicurezza
                 if price:
-                    distance_to_band = ((price - lower_band) / lower_band) * 100
-                    if distance_to_band <= 3.0:   # entro 3% o sotto
+                    distance = ((price - vol_data['lower_band']) / vol_data['lower_band']) * 100
+                    if distance <= 3.0:
                         pause_until_next_candle = True
-                        print(f"⛔ PAUSA ATTIVATA: Prezzo troppo vicino alla Lower Band ({distance_to_band:.1f}%)")
+                        print(f"⛔ PAUSA: Prezzo troppo vicino Lower Band ({distance:.1f}%)")
                     else:
                         pause_until_next_candle = False
                 
@@ -108,7 +117,7 @@ while True:
 
         # ==================== POSIZIONE APERTA ====================
         if size > 0:
-            if vol_data and vol_data['candle_low'] < vol_data['lower_band']:
+            if 'vol_data' in locals() and vol_data and vol_data['candle_low'] < vol_data['lower_band']:
                 if price and price <= vol_data['candle_low'] * 0.997:
                     print(f"🚨 FLASH CRASH → Chiusura immediata")
                     session.place_order(category="linear", symbol=SYMBOL, side="Sell", 
@@ -137,11 +146,11 @@ while True:
         # ==================== NUOVA ENTRATA ====================
         elif size == 0 and (now - last_trade_time > COOLDOWN):
             if pause_until_next_candle:
-                print(f"⏳ In pausa fino alla prossima candela 4H...")
+                print("⏳ In pausa fino alla prossima candela 4H...")
             else:
                 print(f"🧹 Nuova entrata in modalità {current_mode}")
                 session.cancel_all_orders(category="linear", symbol=SYMBOL)
-                time.sleep(1.2)
+                time.sleep(1)
 
                 if current_mode == "CONSERVATIVE":
                     entry_qty = CONSERVATIVE_QTY
@@ -154,9 +163,8 @@ while True:
 
                 session.place_order(category="linear", symbol=SYMBOL, side="Buy", 
                                   orderType="Market", qty=str(entry_qty))
-                
-                time.sleep(2.5)
-                
+                time.sleep(2)
+
                 new_pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
                 if float(new_pos["size"]) > 0:
                     avg = float(new_pos["avgPrice"])
@@ -166,7 +174,6 @@ while True:
                         entry_price = round(avg * (1 - (spacing * i) / 100), 4)
                         qty = CONSERVATIVE_QTY if current_mode == "CONSERVATIVE" else \
                               AGGRESSIVE_GRID[i] if i < len(AGGRESSIVE_GRID) else 20
-                        
                         session.place_order(
                             category="linear", symbol=SYMBOL, side="Buy",
                             orderType="Limit", qty=str(qty), price=str(entry_price)
