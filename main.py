@@ -5,7 +5,7 @@ from pybit.unified_trading import HTTP
 from datetime import datetime, timezone
 
 # ==========================================================
-# CONFIG
+# CONFIG - 1.5% FISSO
 # ==========================================================
 API_KEY = os.environ.get("BYBIT_API_KEY")
 API_SECRET = os.environ.get("BYBIT_API_SECRET")
@@ -19,12 +19,10 @@ pause_until_next_candle = False
 GRID_SIZES = [2, 2, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 25]
 
 AGGRESSIVE_TP = 0.90
-AGGRESSIVE_BASE_SPACING = 1.50
-AGGRESSIVE_COEFF = 0.12
+AGGRESSIVE_SPACING = 1.50      # FISSO 1.5%
 
 CONSERVATIVE_TP = 1.20
-CONSERVATIVE_BASE_SPACING = 2.80
-CONSERVATIVE_COEFF = 0.22
+CONSERVATIVE_SPACING = 2.80    # FISSO 2.8%
 
 COOLDOWN = 18
 last_candle_ts = 0
@@ -73,7 +71,7 @@ def should_check_candle():
     return False
 
 
-print("🚀 BOT MASTER - FIX Cooldown + Spacing Progressivo")
+print("🚀 BOT MASTER - Spacing FISSO 1.5% / 2.8%")
 
 while True:
     try:
@@ -133,35 +131,32 @@ while True:
                 session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Limit", qty=str(size), price=str(target_tp), reduceOnly=True)
 
         # ==================== NUOVA ENTRATA ====================
-        elif size == 0 and (now - last_trade_time > COOLDOWN):   # ← Fix Cooldown
+        elif size == 0 and (now - last_trade_time > COOLDOWN):
             if pause_until_next_candle:
                 print("⏳ In pausa - Prezzo vicino Lower Band")
             else:
                 print(f"🧹 Nuova entrata in modalità {current_mode}")
                 session.cancel_all_orders(category="linear", symbol=SYMBOL)
-                time.sleep(1.5)
+                time.sleep(1)
 
-                base_spacing = CONSERVATIVE_BASE_SPACING if current_mode == "CONSERVATIVE" else AGGRESSIVE_BASE_SPACING
-                coeff = CONSERVATIVE_COEFF if current_mode == "CONSERVATIVE" else AGGRESSIVE_COEFF
+                spacing = CONSERVATIVE_SPACING if current_mode == "CONSERVATIVE" else AGGRESSIVE_SPACING
                 max_levels = 13
 
-                # Entrata iniziale
                 session.place_order(category="linear", symbol=SYMBOL, side="Buy", orderType="Market", qty=str(GRID_SIZES[0]))
                 time.sleep(2.5)
 
                 new_pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
                 if float(new_pos["size"]) > 0:
                     avg = float(new_pos["avgPrice"])
-                    print(f"✅ Entrata @ {avg:.4f} | Modalità: {current_mode}")
+                    print(f"✅ Entrata @ {avg:.4f} | Modalità: {current_mode} (Spacing: {spacing}%)")
 
                     for i in range(1, max_levels):
-                        dynamic_spacing = base_spacing * (1 + i * coeff)   # Spacing progressivo
-                        entry_price = round(avg * (1 - dynamic_spacing / 100), 4)
+                        entry_price = round(avg * (1 - (spacing * i) / 100), 4)
                         qty = GRID_SIZES[i] if i < len(GRID_SIZES) else 15
                         session.place_order(category="linear", symbol=SYMBOL, side="Buy",
                                           orderType="Limit", qty=str(qty), price=str(entry_price))
                     
-                    last_trade_time = now   # ← Aggiornato solo dopo entrata riuscita
+                    last_trade_time = now
 
         time.sleep(5)
 
