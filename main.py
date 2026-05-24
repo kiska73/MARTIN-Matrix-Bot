@@ -21,13 +21,13 @@ GRID_SIZES = [2, 2, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 25]
 COOLDOWN = 20
 
 def get_spacing(i, mode):
-    """Fasce regolari"""
+    """Fasce di spacing"""
     if mode == "AGGRESSIVE":
         if i <= 3:   return 1.0
         elif i <= 6: return 1.2
         elif i <= 9: return 1.5
         else:        return 1.8
-    else:
+    else:  # CONSERVATIVE
         if i <= 3:   return 2.0
         elif i <= 6: return 2.4
         elif i <= 9: return 2.8
@@ -35,6 +35,7 @@ def get_spacing(i, mode):
 
 
 def should_check_candle():
+    """Controllo chiusura candela 4H"""
     now_utc = datetime.now(timezone.utc)
     hour = now_utc.hour
     minute = now_utc.minute
@@ -44,7 +45,7 @@ def should_check_candle():
     return False
 
 
-print("🚀 BOT MASTER - Griglia a Fasce Regolari")
+print("🚀 BOT MASTER FINALE - Griglia a Fasce + SL a chiusura 4H")
 
 while True:
     try:
@@ -59,18 +60,33 @@ while True:
         tp_orders = [o for o in active_orders if o["side"] == "Sell" and o["orderType"] == "Limit"]
         sl_orders = [o for o in active_orders if o.get("triggerPrice")]
 
-        # ==================== CANDela 4H ====================
+        # ==================== CONTROLLO CHIUSURA CANDELA 4H ====================
         if should_check_candle():
             vol_data = get_volatility_data(SYMBOL)
+            
             if vol_data and vol_data['ts'] != last_candle_ts:
                 print(f"📌 Candela 4H chiusa → {datetime.now().strftime('%H:%M:%S')}")
 
+                # Cambio Modalità
                 new_mode = "CONSERVATIVE" if vol_data.get('bb_width', 0) > 40 else "AGGRESSIVE"
                 if new_mode != current_mode:
                     print(f"🔄 CAMBIO MODALITÀ → {new_mode}")
                     current_mode = new_mode
 
-                if price and vol_data.get('lower_band'):
+                # SL Sentinella
+                if vol_data['candle_low'] < vol_data['lower_band']:
+                    if price and price <= vol_data['candle_low'] * 0.997:
+                        print(f"🚨 FLASH CRASH → Chiusura immediata")
+                        session.place_order(category="linear", symbol=SYMBOL, side="Sell", 
+                                          orderType="Market", qty=str(size), reduceOnly=True)
+                    elif not sl_orders:
+                        print(f"📉 SL Sentinella @ {vol_data['candle_low']}")
+                        session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Market",
+                                          qty=str(size), triggerPrice=str(vol_data['candle_low']),
+                                          triggerDirection=2, triggerBy="LastPrice", reduceOnly=True)
+
+                # Pausa
+                if price and vol_data['lower_band']:
                     distance = ((price - vol_data['lower_band']) / vol_data['lower_band']) * 100
                     if distance <= 3.0:
                         pause_until_next_candle = True
@@ -89,25 +105,16 @@ while True:
             if tp_orders:
                 if abs(float(tp_orders[0]["price"]) - target_tp) > 0.0002:
                     session.cancel_order(category="linear", symbol=SYMBOL, orderId=tp_orders[0]["orderId"])
-                    session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Limit", qty=str(size), price=str(target_tp), reduceOnly=True)
+                    session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Limit", 
+                                      qty=str(size), price=str(target_tp), reduceOnly=True)
             else:
-                session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Limit", qty=str(size), price=str(target_tp), reduceOnly=True)
-
-            # SL Sentinella
-            if 'vol_data' in locals() and vol_data and vol_data['candle_low'] < vol_data['lower_band']:
-                if price and price <= vol_data['candle_low'] * 0.997:
-                    print(f"🚨 FLASH CRASH → Chiusura immediata")
-                    session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Market", qty=str(size), reduceOnly=True)
-                elif not sl_orders:
-                    print(f"📉 SL Sentinella @ {vol_data['candle_low']}")
-                    session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Market",
-                                      qty=str(size), triggerPrice=str(vol_data['candle_low']),
-                                      triggerDirection=2, triggerBy="LastPrice", reduceOnly=True)
+                session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Limit", 
+                                  qty=str(size), price=str(target_tp), reduceOnly=True)
 
         # ==================== NUOVA ENTRATA ====================
         elif size == 0 and (now - last_trade_time > COOLDOWN):
             if pause_until_next_candle:
-                print("⏳ In pausa...")
+                print("⏳ In pausa - Prezzo vicino Lower Band")
             else:
                 print(f"🧹 Nuova entrata in modalità {current_mode}")
                 session.cancel_all_orders(category="linear", symbol=SYMBOL)
@@ -123,11 +130,9 @@ while True:
                     avg = float(new_pos["avgPrice"])
                     print(f"✅ Entrata @ {avg:.4f} | Modalità: {current_mode}")
 
-                    cumulative_drop = 0
                     for i in range(1, 13):
                         spacing = get_spacing(i, mode)
-                        cumulative_drop += spacing
-                        entry_price = round(avg * (1 - cumulative_drop / 100), 4)
+                        entry_price = round(avg * (1 - (spacing * i) / 100), 4)
                         qty = GRID_SIZES[i] if i < len(GRID_SIZES) else 15
                         session.place_order(category="linear", symbol=SYMBOL, side="Buy",
                                           orderType="Limit", qty=str(qty), price=str(entry_price))
