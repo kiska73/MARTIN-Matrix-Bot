@@ -5,7 +5,7 @@ from pybit.unified_trading import HTTP
 from datetime import datetime, timezone
 
 # ==========================================================
-# CONFIG
+# CONFIG - GRIGLIA A FASCE
 # ==========================================================
 API_KEY = os.environ.get("BYBIT_API_KEY")
 API_SECRET = os.environ.get("BYBIT_API_SECRET")
@@ -16,18 +16,12 @@ session = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
 current_mode = "AGGRESSIVE"
 pause_until_next_candle = False
 
+# Griglia Quantità
 GRID_SIZES = [2, 2, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 25]
-
-AGGRESSIVE_TP = 0.90
-AGGRESSIVE_SPACING = 1.50
-
-CONSERVATIVE_TP = 1.20
-CONSERVATIVE_SPACING = 2.80
 
 COOLDOWN = 18
 last_candle_ts = 0
 last_trade_time = 0
-last_vol_check = 0
 
 def get_current_price():
     try:
@@ -61,8 +55,21 @@ def get_volatility_data(symbol):
         print(f"Errore Kline: {e}")
         return None
 
+def get_spacing(i, mode):
+    """Fasce di spacing come richiesto"""
+    if mode == "AGGRESSIVE":
+        if i <= 3:   return 1.0
+        elif i <= 6: return 1.2
+        elif i <= 9: return 1.5
+        else:        return 1.8
+    else:  # CONSERVATIVE
+        if i <= 3:   return 2.0
+        elif i <= 6: return 2.4
+        elif i <= 9: return 2.8
+        else:        return 3.2
 
-def is_4h_candle_close():
+def should_check_candle():
+    """Controllo chiusura candela 4H"""
     now_utc = datetime.now(timezone.utc)
     hour = now_utc.hour
     minute = now_utc.minute
@@ -72,7 +79,7 @@ def is_4h_candle_close():
     return False
 
 
-print("🚀 BOT MASTER - Scan ogni 12s + Pausa migliorata")
+print("🚀 BOT MASTER - Griglia a Fasce + Pausa Attiva")
 
 while True:
     try:
@@ -87,34 +94,30 @@ while True:
         tp_orders = [o for o in active_orders if o["side"] == "Sell" and o["orderType"] == "Limit"]
         sl_orders = [o for o in active_orders if o.get("triggerPrice")]
 
-        # ==================== SCAN OGNI 12 SECONDI ====================
-        if now - last_vol_check > 12:
+        # ==================== CONTROLLO CANDela 4H ====================
+        if should_check_candle():
             vol_data = get_volatility_data(SYMBOL)
-            last_vol_check = now
+            
+            if vol_data and vol_data['ts'] != last_candle_ts:
+                print(f"📌 Candela 4H chiusa (+5s) → {datetime.now().strftime('%H:%M:%S')}")
 
-            if vol_data:
-                # Modalità e SL solo alla vera chiusura 4H
-                if is_4h_candle_close() and vol_data['ts'] != last_candle_ts:
-                    print(f"📌 Candela 4H chiusa (+5s) → {datetime.now().strftime('%H:%M:%S')}")
+                new_mode = "CONSERVATIVE" if vol_data['bb_width'] > 40 else "AGGRESSIVE"
+                if new_mode != current_mode:
+                    print(f"🔄 CAMBIO MODALITÀ → {new_mode} (BB Width: {vol_data['bb_width']}%)")
+                    current_mode = new_mode
 
-                    new_mode = "CONSERVATIVE" if vol_data['bb_width'] > 40 else "AGGRESSIVE"
-                    if new_mode != current_mode:
-                        print(f"🔄 CAMBIO MODALITÀ → {new_mode} (BB Width: {vol_data['bb_width']}%)")
-                        current_mode = new_mode
-
-                    last_candle_ts = vol_data['ts']
-
-                # Filtro Pausa (controllato ogni 12 secondi)
+                # Filtro Pausa
                 if price and vol_data['lower_band']:
                     distance = ((price - vol_data['lower_band']) / vol_data['lower_band']) * 100
                     if distance <= 3.0:
-                        if not pause_until_next_candle:
-                            print(f"⛔ PAUSA ATTIVATA - Prezzo troppo vicino Lower Band ({distance:.1f}%)")
                         pause_until_next_candle = True
+                        print(f"⛔ PAUSA ATTIVATA - Troppo vicino Lower Band ({distance:.1f}%)")
                     else:
                         if pause_until_next_candle:
-                            print(f"✅ Pausa terminata - Distanza OK ({distance:.1f}%)")
+                            print(f"✅ Pausa terminata")
                         pause_until_next_candle = False
+                
+                last_candle_ts = vol_data['ts']
 
         # ==================== POSIZIONE APERTA ====================
         if size > 0:
@@ -128,6 +131,7 @@ while True:
                                       qty=str(size), triggerPrice=str(vol_data['candle_low']),
                                       triggerDirection=2, triggerBy="LastPrice", reduceOnly=True)
 
+            # TP Dinamico
             tp_percent = CONSERVATIVE_TP if current_mode == "CONSERVATIVE" else AGGRESSIVE_TP
             target_tp = round(avg_price * (1 + tp_percent/100), 4)
             
@@ -145,11 +149,9 @@ while True:
             else:
                 print(f"🧹 Nuova entrata in modalità {current_mode}")
                 session.cancel_all_orders(category="linear", symbol=SYMBOL)
-                time.sleep(1)
+                time.sleep(1.5)
 
-                spacing = CONSERVATIVE_SPACING if current_mode == "CONSERVATIVE" else AGGRESSIVE_SPACING
-                max_levels = 13
-
+                mode = current_mode
                 session.place_order(category="linear", symbol=SYMBOL, side="Buy", orderType="Market", qty=str(GRID_SIZES[0]))
                 time.sleep(2.5)
 
@@ -158,7 +160,8 @@ while True:
                     avg = float(new_pos["avgPrice"])
                     print(f"✅ Entrata @ {avg:.4f} | Modalità: {current_mode}")
 
-                    for i in range(1, max_levels):
+                    for i in range(1, 13):
+                        spacing = get_spacing(i, mode)
                         entry_price = round(avg * (1 - (spacing * i) / 100), 4)
                         qty = GRID_SIZES[i] if i < len(GRID_SIZES) else 15
                         session.place_order(category="linear", symbol=SYMBOL, side="Buy",
