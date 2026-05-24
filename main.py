@@ -21,13 +21,13 @@ GRID_SIZES = [2, 2, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 25]
 COOLDOWN = 20
 
 def get_spacing(i, mode):
-    """Fasce esatte come hai chiesto"""
+    """Fasce regolari"""
     if mode == "AGGRESSIVE":
-        if i <= 3:   return 1.0   # primi 3 ordini
+        if i <= 3:   return 1.0
         elif i <= 6: return 1.2
         elif i <= 9: return 1.5
         else:        return 1.8
-    else:  # CONSERVATIVE
+    else:
         if i <= 3:   return 2.0
         elif i <= 6: return 2.4
         elif i <= 9: return 2.8
@@ -44,7 +44,7 @@ def should_check_candle():
     return False
 
 
-print("🚀 BOT MASTER - Griglia a Fasce Corretta")
+print("🚀 BOT MASTER - Griglia a Fasce Regolari")
 
 while True:
     try:
@@ -59,7 +59,7 @@ while True:
         tp_orders = [o for o in active_orders if o["side"] == "Sell" and o["orderType"] == "Limit"]
         sl_orders = [o for o in active_orders if o.get("triggerPrice")]
 
-        # Controllo candela 4H
+        # ==================== CANDela 4H ====================
         if should_check_candle():
             vol_data = get_volatility_data(SYMBOL)
             if vol_data and vol_data['ts'] != last_candle_ts:
@@ -70,7 +70,6 @@ while True:
                     print(f"🔄 CAMBIO MODALITÀ → {new_mode}")
                     current_mode = new_mode
 
-                # Pausa
                 if price and vol_data.get('lower_band'):
                     distance = ((price - vol_data['lower_band']) / vol_data['lower_band']) * 100
                     if distance <= 3.0:
@@ -81,7 +80,7 @@ while True:
 
                 last_candle_ts = vol_data['ts']
 
-        # Posizione aperta
+        # ==================== POSIZIONE APERTA ====================
         if size > 0:
             # TP Dinamico
             tp_percent = 1.20 if current_mode == "CONSERVATIVE" else 0.90
@@ -105,7 +104,7 @@ while True:
                                       qty=str(size), triggerPrice=str(vol_data['candle_low']),
                                       triggerDirection=2, triggerBy="LastPrice", reduceOnly=True)
 
-        # Nuova entrata
+        # ==================== NUOVA ENTRATA ====================
         elif size == 0 and (now - last_trade_time > COOLDOWN):
             if pause_until_next_candle:
                 print("⏳ In pausa...")
@@ -124,9 +123,11 @@ while True:
                     avg = float(new_pos["avgPrice"])
                     print(f"✅ Entrata @ {avg:.4f} | Modalità: {current_mode}")
 
+                    cumulative_drop = 0
                     for i in range(1, 13):
                         spacing = get_spacing(i, mode)
-                        entry_price = round(avg * (1 - (spacing * i) / 100), 4)
+                        cumulative_drop += spacing
+                        entry_price = round(avg * (1 - cumulative_drop / 100), 4)
                         qty = GRID_SIZES[i] if i < len(GRID_SIZES) else 15
                         session.place_order(category="linear", symbol=SYMBOL, side="Buy",
                                           orderType="Limit", qty=str(qty), price=str(entry_price))
