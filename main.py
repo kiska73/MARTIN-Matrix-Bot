@@ -19,6 +19,8 @@ pause_until_next_candle = False
 GRID_SIZES = [2, 2, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 25]
 
 COOLDOWN = 20
+last_candle_ts = 0
+last_trade_time = 0   # ← Variabile mancante aggiunta
 
 def get_current_price():
     try:
@@ -74,7 +76,7 @@ def should_check_candle():
     return False
 
 
-print("🚀 BOT MASTER FINALE - Griglia a Fasce")
+print("🚀 BOT MASTER FINALE - Corretto")
 
 while True:
     try:
@@ -101,19 +103,7 @@ while True:
                     print(f"🔄 CAMBIO MODALITÀ → {new_mode}")
                     current_mode = new_mode
 
-                # SL Sentinella
-                if vol_data['candle_low'] < vol_data['lower_band']:
-                    if price and price <= vol_data['candle_low'] * 0.997:
-                        print(f"🚨 FLASH CRASH → Chiusura immediata")
-                        session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Market", qty=str(size), reduceOnly=True)
-                    elif not sl_orders and size > 0:
-                        print(f"📉 SL Sentinella @ {vol_data['candle_low']}")
-                        session.place_order(category="linear", symbol=SYMBOL, side="Sell", orderType="Market",
-                                          qty=str(size), triggerPrice=str(vol_data['candle_low']),
-                                          triggerDirection=2, triggerBy="LastPrice", reduceOnly=True)
-
-                # Pausa
-                if price and vol_data['lower_band']:
+                if price and vol_data.get('lower_band'):
                     distance = ((price - vol_data['lower_band']) / vol_data['lower_band']) * 100
                     if distance <= 3.0:
                         pause_until_next_candle = True
@@ -125,7 +115,6 @@ while True:
 
         # ==================== POSIZIONE APERTA ====================
         if size > 0:
-            # TP Dinamico
             tp_percent = 1.20 if current_mode == "CONSERVATIVE" else 0.90
             target_tp = round(avg_price * (1 + tp_percent/100), 4)
             
