@@ -11,17 +11,23 @@ API_KEY = os.environ.get("BYBIT_API_KEY")
 API_SECRET = os.environ.get("BYBIT_API_SECRET")
 SYMBOL = "LABUSDT"
 
-session = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
+# ==================== PRECISIONE (cambia qui facilmente) ====================
+PRICE_DECIMALS = 4          # LABUSDT ha massimo 4 decimali nel prezzo
+QTY_DECIMALS = 0            # 0 = quantità intera (senza decimali)
+MIN_QTY = 1                 # Quantità minima da usare
+
+# ==================== RISK MANAGEMENT ====================
+UNIT_PERCENT = 1.25         # 1.25% del wallet per 1 unità
 
 current_mode = "AGGRESSIVE"
 pause_until_next_candle = False
 last_candle_ts = 0
 last_trade_time = 0
-
-GRID_SIZES = [2, 2, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 25]
-
 COOLDOWN = 20
 
+GRID_UNITS = [2, 2, 2, 3, 4, 5, 6, 8, 10, 13, 16, 20, 25]
+
+# ==========================================================
 def get_current_price():
     try:
         ticker = session.get_tickers(category="linear", symbol=SYMBOL)
@@ -30,6 +36,34 @@ def get_current_price():
         return None
 
 
+def get_balance():
+    """Restituisce Total Equity (vero saldo totale dell'account)"""
+    try:
+        res = session.get_wallet_balance(accountType="UNIFIED")
+        equity = float(res["result"]["list"][0].get("totalEquity", 0))
+        return max(equity, 50.0)        # protezione minimo
+    except Exception as e:
+        print(f"Errore get_balance: {e}")
+        return 200.0
+
+
+def get_qty(units: int, price: float):
+    """Calcola quantità intera rispettando MIN_QTY"""
+    wallet = get_balance()
+    value_per_unit = wallet * (UNIT_PERCENT / 100)
+    total_value = value_per_unit * units
+    raw_qty = total_value / price
+    
+    qty = max(int(round(raw_qty)), MIN_QTY)
+    return qty
+
+
+def format_price(price: float):
+    """Formatta il prezzo con i decimali corretti"""
+    return round(price, PRICE_DECIMALS)
+
+
+# ==========================================================
 def get_volatility_data(symbol):
     try:
         data = session.get_kline(category="linear", symbol=symbol, interval="240", limit=42)
@@ -48,8 +82,7 @@ def get_volatility_data(symbol):
         return {
             'ts': df['ts'].iloc[-1],
             'bb_width': round(bb_width_percent, 2),
-            'candle_low': round(df['low'].iloc[-1], 4),
-            'lower_band': round(lower_band.iloc[-1], 4),
+            'lower_band': format_price(lower_band.iloc[-1]),
         }
     except Exception as e:
         print(f"Errore Kline: {e}")
@@ -57,7 +90,6 @@ def get_volatility_data(symbol):
 
 
 def get_spacing(i, mode):
-    """Fasce di spacing"""
     if mode == "AGGRESSIVE":
         if i <= 3:   return 1.0
         elif i <= 6: return 1.2
@@ -72,117 +104,117 @@ def get_spacing(i, mode):
 
 def should_check_candle():
     now_utc = datetime.now(timezone.utc)
-    if now_utc.hour % 4 == 0 and now_utc.minute == 0 and 5 <= now_utc.second <= 25:
-        return True
-    return False
+    return (now_utc.hour % 4 == 0 and now_utc.minute == 0 and 5 <= now_utc.second <= 25)
 
 
 # ==========================================================
-print("🚀 BOT MASTER - Griglia a Fasce Corretta + Pausa con Cancel")
-print(f"Symbol: {SYMBOL} | Modalità iniziale: {current_mode}\n")
+print("🚀 BOT MASTER - Configurabile")
+print(f"Symbol: {SYMBOL}")
+print(f"Price Decimals: {PRICE_DECIMALS} | Qty Decimals: {QTY_DECIMALS} | Min Qty: {MIN_QTY}")
+print(f"1 Unità = {UNIT_PERCENT}% del Total Equity\n")
 
 while True:
     try:
         now = time.time()
         price = get_current_price()
+        if not price:
+            time.sleep(5)
+            continue
+
+        wallet = get_balance()
+        print(f"💰 Total Equity: {wallet:.2f} USDT | Prezzo: {price:.4f}", end=" | ")
 
         # Posizione attuale
         pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
         size = float(pos["size"])
         avg_price = float(pos.get("avgPrice", 0))
 
-        # Ordini attivi
         active_orders = session.get_open_orders(category="linear", symbol=SYMBOL)["result"]["list"]
         tp_orders = [o for o in active_orders if o["side"] == "Sell" and o["orderType"] == "Limit"]
-        sl_orders = [o for o in active_orders if o.get("triggerPrice")]
 
         distance = 0.0
 
-        # ==================== CONTROLLO CANDela 4H ====================
+        # ==================== CONTROLLO 4H ====================
         if should_check_candle():
             vol_data = get_volatility_data(SYMBOL)
-            if vol_data and vol_data['ts'] != last_candle_ts:
-                print(f"📌 Candela 4H chiusa → {datetime.now().strftime('%H:%M:%S')}")
+            if vol_data and vol_data.get('ts') != last_candle_ts:
+                print(f"\n📌 Candela 4H chiusa → {datetime.now().strftime('%H:%M:%S')}")
 
-                # Cambio modalità
                 new_mode = "CONSERVATIVE" if vol_data.get('bb_width', 0) > 40 else "AGGRESSIVE"
                 if new_mode != current_mode:
                     print(f"🔄 CAMBIO MODALITÀ → {new_mode}")
                     current_mode = new_mode
 
-                # Calcolo distanza dal Lower Band
                 if price and vol_data.get('lower_band'):
                     distance = ((price - vol_data['lower_band']) / vol_data['lower_band']) * 100
 
                     if distance <= 3.0:
                         if not pause_until_next_candle:
-                            print(f"⛔️ ATTIVAZIONE PAUSA - Prezzo troppo vicino al Lower Band ({distance:.2f}%)")
+                            print(f"⛔️ PAUSA ATTIVATA ({distance:.2f}%)")
                             session.cancel_all_orders(category="linear", symbol=SYMBOL)
                             pause_until_next_candle = True
                     else:
                         if pause_until_next_candle:
-                            print(f"✅ FINE PAUSA - Distanza tornata accettabile ({distance:.2f}%)")
+                            print(f"✅ PAUSA TERMINATA ({distance:.2f}%)")
                         pause_until_next_candle = False
 
                 last_candle_ts = vol_data['ts']
 
-        # ==================== GESTIONE POSIZIONE APERTA ====================
+        # ==================== POSIZIONE APERTA ====================
         if size > 0:
             tp_percent = 1.20 if current_mode == "CONSERVATIVE" else 0.90
-            target_tp = round(avg_price * (1 + tp_percent/100), 4)
+            target_tp = format_price(avg_price * (1 + tp_percent/100))
             
             if not tp_orders or abs(float(tp_orders[0]["price"]) - target_tp) > 0.0002:
                 if tp_orders:
                     session.cancel_order(category="linear", symbol=SYMBOL, orderId=tp_orders[0]["orderId"])
                 session.place_order(
-                    category="linear", 
-                    symbol=SYMBOL, 
-                    side="Sell", 
-                    orderType="Limit", 
-                    qty=str(size), 
-                    price=str(target_tp), 
-                    reduceOnly=True
+                    category="linear", symbol=SYMBOL, side="Sell", orderType="Limit",
+                    qty=str(size), price=str(target_tp), reduceOnly=True
                 )
 
         # ==================== NUOVA ENTRATA ====================
         elif size == 0 and (now - last_trade_time > COOLDOWN):
             if pause_until_next_candle:
-                print(f"⏳ In pausa fino alla prossima candela 4H... (Distanza: {distance:.2f}%)")
+                print(f"⏳ In pausa... ({distance:.2f}%)")
             else:
                 print(f"🧹 Nuova entrata in modalità {current_mode}")
-                
-                # Cancella tutto prima di entrare
+
                 session.cancel_all_orders(category="linear", symbol=SYMBOL)
                 time.sleep(1.5)
 
-                # Market Buy iniziale
+                initial_qty = get_qty(GRID_UNITS[0], price)
+                print(f"   → Qty: {initial_qty} LAB")
+
                 session.place_order(
                     category="linear", 
                     symbol=SYMBOL, 
                     side="Buy", 
                     orderType="Market", 
-                    qty=str(GRID_SIZES[0])
+                    qty=str(initial_qty)
                 )
                 time.sleep(2.5)
 
                 new_pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
                 if float(new_pos["size"]) > 0:
                     avg = float(new_pos["avgPrice"])
-                    print(f"✅ Entrata eseguita @ {avg:.4f} | Modalità: {current_mode}")
+                    print(f"✅ Entrata eseguita @ {avg:.4f} | Qty: {initial_qty}")
 
                     accumulated_drop = 0.0
                     for i in range(1, 13):
                         spacing = get_spacing(i, current_mode)
                         accumulated_drop += spacing
-                        entry_price = round(avg * (1 - accumulated_drop / 100), 4)
-                        qty = GRID_SIZES[i] if i < len(GRID_SIZES) else 15
+                        entry_price = format_price(avg * (1 - accumulated_drop / 100))
+                        
+                        units = GRID_UNITS[i] if i < len(GRID_UNITS) else 25
+                        grid_qty = get_qty(units, price)
                         
                         session.place_order(
                             category="linear", 
                             symbol=SYMBOL, 
                             side="Buy",
                             orderType="Limit", 
-                            qty=str(qty), 
+                            qty=str(grid_qty), 
                             price=str(entry_price)
                         )
                     
@@ -191,5 +223,5 @@ while True:
         time.sleep(5)
 
     except Exception as e:
-        print(f"⚠️ Errore generale: {e}")
+        print(f"⚠️ Errore: {e}")
         time.sleep(10)
