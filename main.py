@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 # CONFIGURAZIONE PRINCIPALE - CAMBIA QUI
 # ==========================================================
 SYMBOL = "LABUSDT"
-BASE_QTY = 1.0
+BASE_QTY = 2.0
 PERC_PAUSE = 2.5
 
 GRID_MULTIPLIERS = [1, 1, 1, 2, 2, 3, 4, 5, 6, 7, 9, 11, 13]
