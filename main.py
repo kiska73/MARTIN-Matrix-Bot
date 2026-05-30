@@ -160,7 +160,7 @@ while True:
                 print(f"📊 Candela 4H → {datetime.now().strftime('%H:%M:%S')} | BB Width: {vol_data['bb_width']}% | Low: {vol_data['low']}")
 
                 # Regime detection
-                new_mode = "CONSERVATIVE" if vol_data.get('bb_width', 0) > 40 else "AGGRESSIVE"
+                new_mode = "CONSERVATIVE" if vol_data.get('bb_width', 0) > 30 else "AGGRESSIVE"
                 if new_mode != current_mode:
                     print(f"🔄 CAMBIO MODALITÀ → {new_mode}")
                     current_mode = new_mode
