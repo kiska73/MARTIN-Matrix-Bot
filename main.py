@@ -17,7 +17,7 @@ GRID_MULTIPLIERS = [1, 1, 1, 1.5, 2, 2, 3, 4.5]
 GRID_SPACING = [0.0, 1.0, 1.0, 1.2, 1.5, 2.0, 2.5, 2.8]
 
 # Target profit fisso della griglia (es. 0.90% sul prezzo medio ponderato)
-TAKE_PROFIT_PERCENT = 0.70 
+TAKE_PROFIT_PERCENT = 0.90 
 
 COOLDOWN = 30  # Secondi di pausa dopo la chiusura di una griglia
 
