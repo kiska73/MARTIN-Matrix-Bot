@@ -2,33 +2,38 @@ import os
 import time
 import pandas as pd
 from pybit.unified_trading import HTTP
-from datetime import datetime, timezone
 
 # ==============================================================================
-# CONFIGURAZIONE PRINCIPALE
+# CONFIGURAZIONE OPERATIVA - QUANTITÀ FISSE (UAI)
 # ==============================================================================
 SYMBOL = "UAIUSDT"
-BASE_QTY = 60
-PERC_PAUSE = 1
-GRID_MULTIPLIERS = [1, 1, 1, 2, 2, 3, 4, 5, 6, 7, 9, 11, 13]
-current_mode = "AGGRESSIVE"
-COOLDOWN = 20
+BASE_QTY = 60  # <<--- LA QUANTITÀ LA DECIDI TU QUI (Pezzi del 1° livello)
+
+# 8 Livelli: il bot moltiplicherà la tua BASE_QTY per questi coefficienti
+GRID_MULTIPLIERS = [1, 1, 1, 1.5, 2, 2, 3, 4.5] 
+
+# Calibri degli spaziatori per arrivare precisi al 12% di calo cumulativo
+# L1: 0% | L2: -1.0% | L3: -2.0% | L4: -3.2% | L5: -4.7% | L6: -6.7% | L7: -9.2% | L8: -12.0%
+GRID_SPACING = [0.0, 1.0, 1.0, 1.2, 1.5, 2.0, 2.5, 2.8]
+
+# Target profit fisso della griglia (es. 0.90% sul prezzo medio ponderato)
+TAKE_PROFIT_PERCENT = 0.70 
+
+COOLDOWN = 30  # Secondi di pausa dopo la chiusura di una griglia
 
 # ==============================================================================
-# DECIMALI
+# DECIMALI STRUMENTO
 # ==============================================================================
 PRICE_DECIMALS = 5
 QTY_DECIMALS = 0 
 
 # ==============================================================================
-# VARIABILI DI STATO
+# VARIABILI DI STATO (TRACKING AUTOMATICO)
 # ==============================================================================
-pause_until_next_candle = False
-last_candle_ts = 0
 last_trade_time = 0
 last_tp_price = 0.0
 last_tp_update_time = 0
-last_sl_price = 0.0   
+prezzo_inizio_griglia = 0.0  # Punto di riferimento fisso per lo SL fisso
 
 # Connessione alle API di Bybit
 session = HTTP(
@@ -51,11 +56,11 @@ def round_qty(qty):
 def cancel_all_orders():
     try:
         session.cancel_all_orders(category="linear", symbol=SYMBOL)
-        time.sleep(1.0)
-        print(" Tutti gli ordini cancellati")
+        time.sleep(0.5)
+        print(" [SISTEMA] Tutti gli ordini limit cancellati")
         return True
     except Exception as e:
-        print(f"Errore cancel all: {e}")
+        print(f" Errore cancel all: {e}")
         return False
 
 def close_position():
@@ -65,23 +70,18 @@ def close_position():
         if size == 0:
             return False
         
-        # Rileva la direzione reale. Se per errore rileva uno Short, lo chiude con un Buy.
         pos_side = pos.get("side", "Buy")
         side = "Sell" if pos_side == "Buy" else "Buy"
         
         session.place_order(
-            category="linear", 
-            symbol=SYMBOL, 
-            side=side, 
-            orderType="Market", 
-            qty=str(abs(size)), 
-            reduceOnly=True
+            category="linear", symbol=SYMBOL, side=side, orderType="Market", 
+            qty=str(abs(size)), reduceOnly=True
         )
-        print(f" POSIZIONE CHIUSA A MERCATO | Side Originale: {pos_side} | Size: {size}")
-        time.sleep(1.5)
+        print(f" 💥 POSIZIONE CHIUSA A MERCATO | Size: {size} UAI")
+        time.sleep(1.0)
         return True
     except Exception as e:
-        print(f"Errore chiusura posizione: {e}")
+        print(f" Errore chiusura posizione: {e}")
         return False
 
 def get_current_price():
@@ -91,171 +91,61 @@ def get_current_price():
     except:
         return None
 
-def get_volatility_data(symbol):
-    try:
-        data = session.get_kline(category="linear", symbol=symbol, interval="240", limit=150)
-        df = pd.DataFrame(data['result']['list'][::-1], 
-                          columns=['ts', 'open', 'high', 'low', 'close', 'vol', 'turnover'])
-        
-        df['close'] = df['close'].astype(float)
-        df['low']   = df['low'].astype(float)
-        df['ts']    = df['ts'].astype(int)
-        
-        sma = df['close'].rolling(window=40).mean()
-        std = df['close'].rolling(window=40).std()
-        
-        upper_band = sma + (std * 2)
-        lower_band = sma - (std * 2)
-        
-        bb_width_percent = ((upper_band.iloc[-1] - lower_band.iloc[-1]) / sma.iloc[-1]) * 100
-        distanza_da_sma = ((df['close'].iloc[-1] - sma.iloc[-1]) / sma.iloc[-1]) * 100
-        
-        return {
-            'ts': df['ts'].iloc[-1],
-            'bb_width': round(bb_width_percent, 2),
-            'dist_sma': round(distanza_da_sma, 2),
-            'lower_band': round(lower_band.iloc[-1], 4),
-            'low': round(df['low'].iloc[-2], 4),
-            'close': round(df['close'].iloc[-1], 4),
-        }
-    except Exception as e:
-        print(f"Errore Kline BB: {e}")
-        return None
-
-def get_spacing(i, mode):
-    if mode == "PANIC":
-        if i <= 3:   return 3.0
-        elif i <= 6: return 3.6
-        elif i <= 9: return 4.5
-        else:        return 5.4
-    elif mode == "CONSERVATIVE":
-        if i <= 3:   return 2.0
-        elif i <= 6: return 2.4
-        elif i <= 9: return 2.8
-        else:        return 3.2
-    else: # AGGRESSIVE
-        if i <= 3:   return 1.0
-        elif i <= 6: return 1.2
-        elif i <= 9: return 1.5
-        else:        return 1.8
-
-def should_check_candle():
-    now_utc = datetime.now(timezone.utc)
-    return (now_utc.hour % 4 == 0 and now_utc.minute == 0 and 5 <= now_utc.second <= 25)
-
 # ==============================================================================
-# AVVIO BOT E CICLO PRINCIPALE
+# AVVIO BOT E CICLO CONTINUO
 # ==============================================================================
-print(" BOT MASTER - Griglia + SL Dinamico 4H (v3.6 - Solo LONG Blindato)")
-print(f"Symbol: {SYMBOL} | BASE_QTY: {BASE_QTY} | PERC_PAUSE: {PERC_PAUSE}%\n")
+print(" 🤖 BOT GRID LEVA 1 (v8.1 - Quantità Fissa in Token)")
+print(f" Strumento: {SYMBOL} | Quantità Base (L1): {BASE_QTY} UAI | Livelli: 8")
+print(f" Copertura griglia: -12.0% | Stop Loss Fisso dalla partenza: -15.5%\n")
 
 while True:
     try:
         now = time.time()
         price = get_current_price()
         
-        # Lettura e filtraggio della posizione (Riconosce solo i LONG)
+        # Lettura dello stato reale della posizione su Bybit
         pos_data = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
         pos_side = pos_data.get("side", "None")
         raw_size = float(pos_data["size"])
 
-        # Forza size a 0 se la posizione NON è un LONG ("Buy") attivo
-        if pos_side == "Buy" and raw_size > 0:
-            size = raw_size
-        else:
-            size = 0.0
-
+        # Riconosce solo se siamo effettivamente in LONG
+        size = raw_size if (pos_side == "Buy" and raw_size > 0) else 0.0
         avg_price = float(pos_data.get("avgPrice", 0))
+        
         active_orders = session.get_open_orders(category="linear", symbol=SYMBOL)["result"]["list"]
 
-        # Se non ci sono posizioni LONG attive, resettiamo le variabili di tracking dello stop/TP
+        # Se non abbiamo posizioni aperte, puliamo le variabili di riferimento
         if size == 0:
             last_tp_price = 0.0
-            last_sl_price = 0.0
+            prezzo_inizio_griglia = 0.0
 
-        # ==================== CONTROLLO CANDELA 4H / STARTUP TIMING ====================
-        if should_check_candle() or last_candle_ts == 0:
-            vol_data = get_volatility_data(SYMBOL)
-            
-            if vol_data and vol_data['ts'] != last_candle_ts:
-                dist_sma = vol_data.get('dist_sma', 0)
-                bb_width = vol_data.get('bb_width', 0)
-                
-                print(f"\n Analisi Mercato → {datetime.now().strftime('%H:%M:%S')}")
-                print(f"   | BB Width (40): {bb_width}% | Distanza da SMA40: {dist_sma}% | Low 4H Chiusa: {vol_data['low']}")
+        # ==================== CONTROLLO REALE STOP LOSS FISSO (-15.5%) ====================
+        if size > 0 and prezzo_inizio_griglia > 0:
+            target_sl = round_price(prezzo_inizio_griglia * (1 - 15.5 / 100))
 
-                # Logica cambio modalità
-                if dist_sma >= 75.0 or bb_width > 120.0:
-                    new_mode = "PANIC"
-                elif dist_sma >= 30.0 or bb_width > 60.0:
-                    new_mode = "CONSERVATIVE"
-                else:
-                    new_mode = "AGGRESSIVE"
-
-                if new_mode != current_mode:
-                    print(f" 🔥 CAMBIO MODALITÀ OPERATIVA → da {current_mode} a {new_mode} 🔥")
-                    current_mode = new_mode
-
-                # === CONTROLLO PAUSA ESCLUSIVO E BLINDATO SULLA BANDA BASSA ===
-                if price and vol_data.get('lower_band'):
-                    lower_band = vol_data['lower_band']
-                    
-                    # Definiamo la soglia di prezzo matematica (Banda Bassa + tolleranza percentuale)
-                    soglia_sicurezza = lower_band * (1 + (PERC_PAUSE / 100))
-                    
-                    previous_pause = pause_until_next_candle
-                    
-                    # La pausa si attiva SOLO se il prezzo è minore o uguale alla soglia della banda bassa.
-                    # Se il prezzo vola verso l'alto (es. 19.08), questa condizione sarà FALSE.
-                    pause_until_next_candle = (price <= soglia_sicurezza)
-                    
-                    print(f"   [VERIFICA PAUSA 4H] Prezzo: {price} | Banda Bassa: {lower_band} | Soglia Attivazione Pausa: {soglia_sicurezza:.4f}")
-                    print(f"   | Stato: {'⚠️ IN PAUSA REGIME' if pause_until_next_candle else '✅ REGIME OPERATIVO REGOLARE'}")
-
-                    if pause_until_next_candle and not previous_pause:
-                        print("   PAUSA ATTIVATA → CHIUSURA FORZATA DELLE POSIZIONI PER SICUREZZA (Rottura/Vicinanza Banda Bassa)")
-                        cancel_all_orders()
-                        close_position()
-                        last_trade_time = now + 40
-
-                # ==================== SL DINAMICO ====================
-                if size > 0:
-                    last_low = vol_data['low']
-                    lower_band = vol_data['lower_band']
-                    
-                    if last_low < lower_band:
-                        sl_price = round_price(last_low * 0.999)
-                        if last_sl_price == 0 or sl_price > last_sl_price:
-                            try:
-                                session.set_trading_stop(category="linear", symbol=SYMBOL, stopLoss=str(sl_price))
-                                last_sl_price = sl_price
-                                print(f"   SL DINAMICO IMPOSTATO @ {sl_price}")
-                            except Exception as e:
-                                print(f"Errore set SL: {e}")
-
-                last_candle_ts = vol_data['ts']
+            if price and price <= target_sl:
+                print(f"\n 🚨🚨 [STOP LOSS MATEMATICO] Prezzo ({price}) <= SL Fisso ({target_sl})!")
+                cancel_all_orders()
+                close_position()
+                prezzo_inizio_griglia = 0.0
+                last_trade_time = now + 300  # 5 minuti di penalità prima di ripartire
+                continue
 
         # ==================== GESTIONE TARGET PROFIT (TP) ====================
         if size > 0:
-            if current_mode == "PANIC":
-                tp_percent = 1.80  
-            elif current_mode == "CONSERVATIVE":
-                tp_percent = 1.20
-            else:
-                tp_percent = 0.90
-                
-            target_tp = round_price(avg_price * (1 + tp_percent / 100))
+            target_tp = round_price(avg_price * (1 + TAKE_PROFIT_PERCENT / 100))
 
+            # Chiusura immediata a mercato se il prezzo supera direttamente il TP target
             if price and price >= target_tp:
-                print(f" Prezzo attuale ({price}) >= TP target ({target_tp}). Chiudo a mercato!")
+                print(f" 🎯 Target raggiunto a mercato! Prezzo ({price}) >= TP ({target_tp}). Chiusura griglia.")
                 cancel_all_orders()
                 close_position()
                 last_trade_time = now  
                 last_tp_price = 0.0
-                last_tp_update_time = 0
-                last_sl_price = 0.0
+                prezzo_inizio_griglia = 0.0
             
-            elif (abs(target_tp - last_tp_price) > (10 ** -PRICE_DECIMALS)) and (now - last_tp_update_time > 12):
+            # Aggiornamento ordine limite di TP
+            elif (abs(target_tp - last_tp_price) > (10 ** -PRICE_DECIMALS)) and (now - last_tp_update_time > 10):
                 tp_orders = [o for o in active_orders if o.get("side") == "Sell" and o.get("orderType") == "Limit" and o.get("reduceOnly") is True]
 
                 update_needed = False
@@ -263,7 +153,7 @@ while True:
                     update_needed = True
                 else:
                     current_tp = float(tp_orders[0]["price"])
-                    if abs(current_tp - target_tp) > 0.001:
+                    if abs(current_tp - target_tp) > (10 ** -PRICE_DECIMALS):
                         update_needed = True
                         try:
                             session.cancel_order(category="linear", symbol=SYMBOL, orderId=tp_orders[0]["orderId"])
@@ -278,73 +168,59 @@ while True:
                         )
                         last_tp_price = target_tp
                         last_tp_update_time = now
-                        print(f" TP impostato → {target_tp} | Prezzo Medio (Avg): {avg_price:.4f} | Target: +{tp_percent}%")
-                    except Exception as e:
-                        print(f" Errore inserimento TP Limit: {e}. Eseguo reset ed emergenza.")
-                        cancel_all_orders()
-                        close_position()
-                        last_trade_time = now
-                        last_tp_price = 0.0
-                        last_tp_update_time = 0
-                        last_sl_price = 0.0
-                        time.sleep(10)
+                        print(f" 📈 Aggiornato Limit Take Profit → {target_tp} | PnL atteso: +{TAKE_PROFIT_PERCENT}%")
+                    except:
+                        pass
 
-        # ==================== GESTIONE NUOVA ENTRATA + GRIGLIA ====================
+        # ==================== GENERAZIONE STRUTTURA GRIGLIA (IN TOKEN) ====================
         elif size == 0 and (now - last_trade_time > COOLDOWN):
             safe_price = price if price is not None else 0.0
+            print(f"\n 🛒 Avvio ciclo griglia 8 livelli @ {safe_price:.4f}")
+            cancel_all_orders()
+            time.sleep(1.0)
+
+            # Livello 1: Ordine a mercato immediato basato sulla tua BASE_QTY
+            qty_livello_1 = round_qty(BASE_QTY * GRID_MULTIPLIERS[0])
             
-            if pause_until_next_candle:
-                print(f" IN PAUSA REGIME | Prezzo attuale: {safe_price:.4f} (In attesa della prossima candela 4H lontano dalla banda bassa)")
-                cancel_all_orders()
-            else:
-                print(f" AVVIO GRIGLIA @ {safe_price:.4f} | Regime Attivo: {current_mode}")
-                cancel_all_orders()
-                time.sleep(2.0) 
+            try:
+                session.place_order(category="linear", symbol=SYMBOL, side="Buy", orderType="Market", qty=str(qty_livello_1))
+                print(f" 🟢 [L1] Eseguito Market: {qty_livello_1} UAI")
+            except Exception as e:
+                print(f" [ERRORE CRITICO] Impossibile aprire ordine iniziale: {e}")
+                time.sleep(10)
+                continue
 
-                try:
-                    session.place_order(category="linear", symbol=SYMBOL, side="Buy", orderType="Market", qty=str(BASE_QTY))
-                    print(f" Ordine market iniziale inviato per {BASE_QTY} pezzi.")
-                except Exception as e:
-                    print(f" Errore critico apertura ordine Market iniziale: {e}")
-                    time.sleep(10)
-                    continue
+            time.sleep(2.0) # Sincronizzazione server
+            new_pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
+            avg = float(new_pos["avgPrice"])
+            
+            # Fissiamo il prezzo di partenza reale per i calcoli successivi
+            prezzo_inizio_griglia = avg 
+            print(f" 📌 Prezzo base impostato a: {prezzo_inizio_griglia:.5f} | SL calcolato a: {prezzo_inizio_griglia * 0.845:.5f}")
 
-                time.sleep(3.0) 
-
-                new_pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
-                current_size = float(new_pos["size"])
-                current_side = new_pos.get("side", "")
+            # Generazione automatica dei restanti 7 livelli LIMIT basati sui moltiplicatori
+            accumulated_drop = 0
+            for i in range(1, len(GRID_MULTIPLIERS)):
+                accumulated_drop += GRID_SPACING[i]
+                entry_price = round_price(prezzo_inizio_griglia * (1 - accumulated_drop / 100))
                 
-                if current_side == "Buy" and current_size > 0:
-                    avg = float(new_pos["avgPrice"])
-                    print(f" Primo ordine eseguito a mercato @ {avg:.4f}. Generazione livelli griglia...")
+                # Calcolo puro dei token: BASE_QTY moltiplicata per il coefficiente del livello
+                qty_livello = round_qty(BASE_QTY * GRID_MULTIPLIERS[i])
+                
+                try:
+                    session.place_order(
+                        category="linear", symbol=SYMBOL, side="Buy",
+                        orderType="Limit", qty=str(qty_livello), price=str(entry_price)
+                    )
+                    print(f" 📥 [L{i+1}] Inserito Limit @ {entry_price:.5f} | Qty: {qty_livello} UAI | Drop: -{accumulated_drop:.1f}%")
+                except Exception as grid_err:
+                    print(f" ❌ Errore inserimento livello {i+1}: {grid_err}")
+            
+            last_trade_time = now
+            print(" ✅ Griglia configurata e attiva con quantità fisse. Monitoraggio...")
 
-                    accumulated_drop = 0
-                    success_orders = 0
-                    
-                    for i in range(1, len(GRID_MULTIPLIERS)):
-                        spacing = get_spacing(i, current_mode)
-                        accumulated_drop += spacing
-                        entry_price = round_price(avg * (1 - accumulated_drop / 100))
-                        qty = round_qty(BASE_QTY * GRID_MULTIPLIERS[i])
-                        
-                        try:
-                            session.place_order(
-                                category="linear", symbol=SYMBOL, side="Buy",
-                                orderType="Limit", qty=str(qty), price=str(entry_price)
-                            )
-                            success_orders += 1
-                        except Exception as grid_err:
-                            print(f" [ERRORE GRIGLIA] Livello {i} fallito: {grid_err}")
-
-                    last_trade_time = now
-                    last_tp_price = 0.0
-                    last_tp_update_time = 0
-                    last_sl_price = 0.0
-                    print(f" Griglia completata: {success_orders} ordini limit inseriti. Copertura totale regime: {accumulated_drop:.1f}%")
-
-        time.sleep(5)
+        time.sleep(2)
 
     except Exception as e:
-        print(f" Errore rilevato nel ciclo continuo: {e}")
-        time.sleep(10)
+        print(f" [ALLERTA SISTEMA] Errore nel ciclo continuo: {e}")
+        time.sleep(5)
