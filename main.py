@@ -16,7 +16,7 @@ GRID_MULTIPLIERS = [1,1,1.2,1.5,1.8,2.2,2.7,3.3]
 GRID_SPACING = [0.0, 0.8, 1.0, 1.2, 1.5, 2.0, 2.5, 3]
 
 # Target profit fisso della griglia (es. 0.90% sul prezzo medio ponderato)
-TAKE_PROFIT_PERCENT = 1.2
+TAKE_PROFIT_PERCENT = 1
 
 # Distanza percentuale dello Stop Loss Fisso dal prezzo di partenza dell'L1
 STOP_LOSS_PERCENT = 15
