@@ -7,7 +7,7 @@ from pybit.unified_trading import HTTP
 # CONFIGURAZIONE OPERATIVA - QUANTITÀ FISSE (UAI)
 # ==============================================================================
 SYMBOL = "UAIUSDT"
-BASE_QTY = 80  # <<--- LA QUANTITÀ LA DECIDI TU QUI (Pezzi del 1° livello)
+BASE_QTY = 50  # <<--- LA QUANTITÀ LA DECIDI TU QUI (Pezzi del 1° livello)
 
 # 8 Livelli: il bot moltiplicherà la tua BASE_QTY per questi coefficienti
 GRID_MULTIPLIERS = [1,1,1.2,1.5,1.8,2.2,2.7,3.3]
