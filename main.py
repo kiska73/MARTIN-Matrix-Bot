@@ -8,12 +8,12 @@ from pybit.unified_trading import HTTP
 # ==============================================================================
 SYMBOL = "UAIUSDT"
 
-# Le tue 3 Size personalizzabili
+# Le tue 3 Size personalizzabili (Modificabili a mano in base al prezzo)
 QTY_LIVELLO_NORMALE = 100  # Size standard con mercato tranquillo
 QTY_LIVELLO_ALTO = 50     # Size ridotta con mercato nervoso
 QTY_LIVELLO_ESTREMO = 20   # Size minima di emergenza con mercato impazzito
 
-# SOGLIE DI ATTIVAZIONE (In salita)
+# SOGLE DI ATTIVAZIONE (In salita - Calcolate sulle 24 ore mobili)
 SOGLIA_ALTA_VOLATILITA = 20.0    # Sopra il 20%, passa a size 50
 SOGLIA_ESTREMA_VOLATILITA = 40.0  # Sopra il 40%, passa a size 20
 
@@ -73,26 +73,35 @@ def round_qty(qty):
 
 def get_daily_volatility():
     """
-    Scarica l'ultima candela Daily e calcola l'escursione percentuale massima (High vs Low)
-    rispetto all'apertura per determinare il nervosismo del mercato.
+    Scarica le ultime 24 candele orarie (1H) per calcolare la volatilità 
+    reale delle ultime 24 ore mobili, evitando il reset di mezzanotte.
     """
     try:
         kline_data = session.get_kline(
-            category="linear", symbol=SYMBOL, interval="D", limit=1
+            category="linear",
+            symbol=SYMBOL,
+            interval="60", # 60 minuti = 1 ora
+            limit=24       # Prende le ultime 24 ore
         )["result"]["list"]
         
         if not kline_data:
             return 0.0
             
-        candle = kline_data[0]
-        open_p = float(candle[1])
-        high_p = float(candle[2])
-        low_p = float(candle[3])
+        # Estraiamo i prezzi di High e Low da tutte le 24 candele
+        highs = [float(candle[2]) for candle in kline_data]
+        lows = [float(candle[3]) for candle in kline_data]
         
-        volatility = ((high_p - low_p) / open_p) * 100
+        # Il prezzo di apertura di 24 ore fa (l'ultima candela nella lista ritornata da Bybit)
+        open_24h_ago = float(kline_data[-1][1]) 
+        
+        max_high = max(highs)
+        min_low = min(lows)
+        
+        # Formula della volatilità mobile sulle 24 ore
+        volatility = ((max_high - min_low) / open_24h_ago) * 100
         return volatility
     except Exception as e:
-        print(f" ⚠️ Errore nel recupero della candela Daily: {e}")
+        print(f" ⚠️ Errore nel recupero della volatilità Rolling 24h: {e}")
         return 0.0
 
 def cancel_all_orders():
@@ -136,7 +145,7 @@ def get_current_price():
 # ==============================================================================
 # AVVIO BOT E CICLO CONTINUO
 # ==============================================================================
-print(" 🤖 BOT GRID LEVA 1 (v8.6 - Protezione a 3 Scaglioni con Isteresi)")
+print(" 🤖 BOT GRID LEVA 1 (v8.7 - Rolling 24h Volatility & 3 Scaglioni)")
 print(f" Strumento: {SYMBOL}")
 print(f"  -> MODALITÀ NORMALE: Size {QTY_LIVELLO_NORMALE}")
 print(f"  -> MODALITÀ ALTA VOLATILITÀ (> {SOGLIA_ALTA_VOLATILITA}%): Size {QTY_LIVELLO_ALTO} (Rientro < {RESET_DA_ALTO_A_NORMALE}%)")
@@ -204,10 +213,10 @@ while True:
         elif size == 0 and (now - last_trade_time > COOLDOWN):
             safe_price = price if price is not None else 0.0
             
-            # --- MACCHINA A STATI DELLA VOLATILITÀ (3 LIVELLI) ---
+            # --- MACCHINA A STATI DELLA VOLATILITÀ (CON FINESTRA ROLLING 24H) ---
             daily_vol = get_daily_volatility()
             
-            # 1. VALUTAZIONE IN SALITA (Se il mercato peggiora, aumentiamo la protezione all'istante)
+            # 1. VALUTAZIONE IN SALITA (Se il mercato peggiora, aumentiamo la protezione)
             if daily_vol > SOGLIA_ESTREMA_VOLATILITA:
                 stato_rischio_attuale = "ESTREMO"
             elif daily_vol > SOGLIA_ALTA_VOLATILITA and stato_rischio_attuale != "ESTREMO":
@@ -226,15 +235,15 @@ while True:
             # 3. ASSEGNAZIONE DELLE QUANTITÀ IN BASE ALLO STATO DECISO
             if stato_rischio_attuale == "ESTREMO":
                 BASE_QTY = QTY_LIVELLO_ESTREMO
-                print(f" 🔥 [RATING: ESTREMO] Volatilità Daily a livelli critici: {daily_vol:.2f}% (Soglia > {SOGLIA_ESTREMA_VOLATILITA}%)")
-                print(f" 🛑 MASSIMA PROTEZIONE: Size impostata al minimo storico: {BASE_QTY} UAI.")
+                print(f" 🔥 [RISCHIO: ESTREMO] Volatilità 24h mobili al {daily_vol:.2f}% (Soglia > {SOGLIA_ESTREMA_VOLATILITA}%)")
+                print(f" 🛑 MASSIMA PROTEZIONE: Size impostata al minimo: {BASE_QTY} UAI.")
             elif stato_rischio_attuale == "ALTO":
                 BASE_QTY = QTY_LIVELLO_ALTO
-                print(f" ⚠️ [RATING: ALTO] Volatilità Daily sostenuta: {daily_vol:.2f}% (Soglia > {SOGLIA_ALTA_VOLATILITA}%)")
+                print(f" ⚠️ [RISCHIO: ALTO] Volatilità 24h mobili al {daily_vol:.2f}% (Soglia > {SOGLIA_ALTA_VOLATILITA}%)")
                 print(f" 📉 SIZE PROTETTA: Ridotta a {BASE_QTY} UAI.")
             else:
                 BASE_QTY = QTY_LIVELLO_NORMALE
-                print(f" ✅ [RATING: NORMALE] Volatilità Daily regolare: {daily_vol:.2f}%.")
+                print(f" ✅ [RISCHIO: NORMALE] Volatilità 24h mobili regolare: {daily_vol:.2f}%.")
                 print(f" 📈 SIZE STANDARD: Utilizzo la quota intera di {BASE_QTY} UAI.")
 
             # Ricalcolo preventivo della quantità massima reale per lo Stop Loss condizionale
