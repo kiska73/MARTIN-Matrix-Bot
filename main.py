@@ -7,15 +7,27 @@ from pybit.unified_trading import HTTP
 # CONFIGURAZIONE OPERATIVA - QUANTITÀ FISSE (UAI)
 # ==============================================================================
 SYMBOL = "UAIUSDT"
-BASE_QTY = 50  # <<--- LA QUANTITÀ LA DECIDI TU QUI (Pezzi del 1° livello)
 
-# 8 Livelli: il bot moltiplicherà la tua BASE_QTY per questi coefficienti
-GRID_MULTIPLIERS = [1,1,1.2,1.5,1.8,2.2,2.7,3.3]
+# Le tue 3 Size personalizzabili
+QTY_LIVELLO_NORMALE = 100  # Size standard con mercato tranquillo
+QTY_LIVELLO_ALTO = 50     # Size ridotta con mercato nervoso
+QTY_LIVELLO_ESTREMO = 20   # Size minima di emergenza con mercato impazzito
+
+# SOGLIE DI ATTIVAZIONE (In salita)
+SOGLIA_ALTA_VOLATILITA = 20.0    # Sopra il 20%, passa a size 50
+SOGLIA_ESTREMA_VOLATILITA = 40.0  # Sopra il 40%, passa a size 20
+
+# SOGLIE DI RIPRISTINO / RIENTRO (In discesa per evitare l'effetto altalena)
+RESET_DA_ALTO_A_NORMALE = 12.0   # Torna a 100 solo se scende sotto il 12%
+RESET_DA_ESTREMO_A_ALTO = 30.0   # Torna a 50 solo se scende sotto il 30%
+
+# 8 Livelli: il bot moltiplicherà la tua BASE_QTY attuale per questi coefficienti
+GRID_MULTIPLIERS = [1, 1, 1.2, 1.5, 1.8, 2.2, 2.7, 3.3]
 
 # Calibri degli spaziatori per arrivare precisi al 16% di calo cumulativo
 GRID_SPACING = [0.0, 0.8, 1.0, 1.2, 1.5, 2.5, 4.0, 6.0]
 
-# Target profit fisso della griglia (es. 0.90% sul prezzo medio ponderato)
+# Target profit fisso della griglia (1% sul prezzo medio ponderato)
 TAKE_PROFIT_PERCENT = 1
 
 # Distanza percentuale dello Stop Loss Fisso dal prezzo di partenza dell'L1
@@ -37,6 +49,10 @@ last_tp_price = 0.0
 last_tp_update_time = 0
 prezzo_inizio_griglia = 0.0 
 
+# Livello di rischio corrente: "NORMALE", "ALTO", "ESTREMO"
+stato_rischio_attuale = "NORMALE"  
+BASE_QTY = QTY_LIVELLO_NORMALE   # Inizializzazione iniziale
+
 # Connessione alle API di Bybit
 session = HTTP(
     testnet=False, 
@@ -55,9 +71,32 @@ def round_qty(qty):
         return int(round(qty))
     return round(qty, QTY_DECIMALS)
 
+def get_daily_volatility():
+    """
+    Scarica l'ultima candela Daily e calcola l'escursione percentuale massima (High vs Low)
+    rispetto all'apertura per determinare il nervosismo del mercato.
+    """
+    try:
+        kline_data = session.get_kline(
+            category="linear", symbol=SYMBOL, interval="D", limit=1
+        )["result"]["list"]
+        
+        if not kline_data:
+            return 0.0
+            
+        candle = kline_data[0]
+        open_p = float(candle[1])
+        high_p = float(candle[2])
+        low_p = float(candle[3])
+        
+        volatility = ((high_p - low_p) / open_p) * 100
+        return volatility
+    except Exception as e:
+        print(f" ⚠️ Errore nel recupero della candela Daily: {e}")
+        return 0.0
+
 def cancel_all_orders():
     try:
-        # Cancella sia gli ordini LIMIT (Griglia e TP) sia i condizionali (SL)
         session.cancel_all_orders(category="linear", symbol=SYMBOL)
         time.sleep(0.5)
         print(" [SISTEMA] Tutti gli ordini (Limit e SL condizionali) cancellati")
@@ -97,30 +136,27 @@ def get_current_price():
 # ==============================================================================
 # AVVIO BOT E CICLO CONTINUO
 # ==============================================================================
-print(" 🤖 BOT GRID LEVA 1 (v8.3 - Fix Trigger Direction & Qty)")
-print(f" Strumento: {SYMBOL} | Quantità Base (L1): {BASE_QTY} UAI | Livelli: 8")
-print(f" Copertura griglia: -12.0% | Stop Loss Fisso (Nativo): -{STOP_LOSS_PERCENT}%\n")
-
-# Calcolo preventivo esatto della dimensione massima teorica della griglia
-MAX_TOTAL_QTY = round_qty(sum([BASE_QTY * m for m in GRID_MULTIPLIERS]))
+print(" 🤖 BOT GRID LEVA 1 (v8.6 - Protezione a 3 Scaglioni con Isteresi)")
+print(f" Strumento: {SYMBOL}")
+print(f"  -> MODALITÀ NORMALE: Size {QTY_LIVELLO_NORMALE}")
+print(f"  -> MODALITÀ ALTA VOLATILITÀ (> {SOGLIA_ALTA_VOLATILITA}%): Size {QTY_LIVELLO_ALTO} (Rientro < {RESET_DA_ALTO_A_NORMALE}%)")
+print(f"  -> MODALITÀ ESTREMA VOLATILITÀ (> {SOGLIA_ESTREMA_VOLATILITA}%): Size {QTY_LIVELLO_ESTREMO} (Rientro < {RESET_DA_ESTREMO_A_ALTO}%)")
+print(f" Stop Loss Fisso (Nativo): -{STOP_LOSS_PERCENT}%\n")
 
 while True:
     try:
         now = time.time()
         price = get_current_price()
         
-        # Lettura dello stato reale della posizione su Bybit
         pos_data = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
         pos_side = pos_data.get("side", "None")
         raw_size = float(pos_data["size"])
 
-        # Riconosce solo se siamo effettivamente in LONG
         size = raw_size if (pos_side == "Buy" and raw_size > 0) else 0.0
         avg_price = float(pos_data.get("avgPrice", 0))
         
         active_orders = session.get_open_orders(category="linear", symbol=SYMBOL)["result"]["list"]
 
-        # Se non abbiamo posizioni aperte, puliamo le variabili di riferimento
         if size == 0:
             last_tp_price = 0.0
             prezzo_inizio_griglia = 0.0
@@ -129,7 +165,6 @@ while True:
         if size > 0:
             target_tp = round_price(avg_price * (1 + TAKE_PROFIT_PERCENT / 100))
 
-            # Chiusura immediata a mercato se il prezzo supera direttamente il TP target
             if price and price >= target_tp:
                 print(f" 🎯 Target raggiunto a mercato! Prezzo ({price}) >= TP ({target_tp}). Chiusura griglia.")
                 cancel_all_orders()
@@ -138,9 +173,7 @@ while True:
                 last_tp_price = 0.0
                 prezzo_inizio_griglia = 0.0
             
-            # Aggiornamento ordine limite di TP (Non tocca lo Stop Loss)
             elif (abs(target_tp - last_tp_price) > (10 ** -PRICE_DECIMALS)) and (now - last_tp_update_time > 10):
-                # Filtra solo l'ordine di TP (Limit, Sell, ReduceOnly) senza toccare i Condizionali
                 tp_orders = [o for o in active_orders if o.get("side") == "Sell" and o.get("orderType") == "Limit" and o.get("reduceOnly") is True]
 
                 update_needed = False
@@ -170,11 +203,48 @@ while True:
         # ==================== GENERAZIONE STRUTTURA GRIGLIA ====================
         elif size == 0 and (now - last_trade_time > COOLDOWN):
             safe_price = price if price is not None else 0.0
-            print(f"\n 🛒 Avvio ciclo griglia 8 livelli @ {safe_price:.4f}")
+            
+            # --- MACCHINA A STATI DELLA VOLATILITÀ (3 LIVELLI) ---
+            daily_vol = get_daily_volatility()
+            
+            # 1. VALUTAZIONE IN SALITA (Se il mercato peggiora, aumentiamo la protezione all'istante)
+            if daily_vol > SOGLIA_ESTREMA_VOLATILITA:
+                stato_rischio_attuale = "ESTREMO"
+            elif daily_vol > SOGLIA_ALTA_VOLATILITA and stato_rischio_attuale != "ESTREMO":
+                stato_rischio_attuale = "ALTO"
+            
+            # 2. VALUTAZIONE IN DISCESA (Se il mercato si calma, verifichiamo i filtri di rientro)
+            elif stato_rischio_attuale == "ESTREMO" and daily_vol < RESET_DA_ESTREMO_A_ALTO:
+                if daily_vol < RESET_DA_ALTO_A_NORMALE:
+                    stato_rischio_attuale = "NORMALE" # Collasso totale della volatilità
+                else:
+                    stato_rischio_attuale = "ALTO"    # Allentamento parziale
+                    
+            elif stato_rischio_attuale == "ALTO" and daily_vol < RESET_DA_ALTO_A_NORMALE:
+                stato_rischio_attuale = "NORMALE"
+
+            # 3. ASSEGNAZIONE DELLE QUANTITÀ IN BASE ALLO STATO DECISO
+            if stato_rischio_attuale == "ESTREMO":
+                BASE_QTY = QTY_LIVELLO_ESTREMO
+                print(f" 🔥 [RATING: ESTREMO] Volatilità Daily a livelli critici: {daily_vol:.2f}% (Soglia > {SOGLIA_ESTREMA_VOLATILITA}%)")
+                print(f" 🛑 MASSIMA PROTEZIONE: Size impostata al minimo storico: {BASE_QTY} UAI.")
+            elif stato_rischio_attuale == "ALTO":
+                BASE_QTY = QTY_LIVELLO_ALTO
+                print(f" ⚠️ [RATING: ALTO] Volatilità Daily sostenuta: {daily_vol:.2f}% (Soglia > {SOGLIA_ALTA_VOLATILITA}%)")
+                print(f" 📉 SIZE PROTETTA: Ridotta a {BASE_QTY} UAI.")
+            else:
+                BASE_QTY = QTY_LIVELLO_NORMALE
+                print(f" ✅ [RATING: NORMALE] Volatilità Daily regolare: {daily_vol:.2f}%.")
+                print(f" 📈 SIZE STANDARD: Utilizzo la quota intera di {BASE_QTY} UAI.")
+
+            # Ricalcolo preventivo della quantità massima reale per lo Stop Loss condizionale
+            MAX_TOTAL_QTY = round_qty(sum([BASE_QTY * m for m in GRID_MULTIPLIERS]))
+
+            print(f"\n 🛒 Avvio ciclo griglia 8 livelli @ {safe_price:.4f} (Max Qty Griglia: {MAX_TOTAL_QTY} UAI)")
             cancel_all_orders()
             time.sleep(1.0)
 
-            # Livello 1: Ordine a mercato immediato basato sulla tua BASE_QTY
+            # Livello 1: Ordine a mercato immediato
             qty_livello_1 = round_qty(BASE_QTY * GRID_MULTIPLIERS[0])
             
             try:
@@ -185,33 +255,22 @@ while True:
                 time.sleep(10)
                 continue
 
-            time.sleep(2.0) # Sincronizzazione server
+            time.sleep(2.0) 
             new_pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
             avg = float(new_pos["avgPrice"])
             
-            # Fissiamo il prezzo di partenza reale
             prezzo_inizio_griglia = avg 
-            
-            # Calcolo del prezzo di Stop Loss statico
             prezzo_sl = round_price(prezzo_inizio_griglia * (1 - STOP_LOSS_PERCENT / 100))
             print(f" 📌 Prezzo base impostato a: {prezzo_inizio_griglia:.5f}")
             
-            # ------------------------------------------------------------------
-            # PIAZZAMENTO DELLO STOP LOSS REALE (CONDIZIONALE) SU BYBIT (FIXED)
-            # ------------------------------------------------------------------
+            # Inserimento dello Stop Loss nativo dinamico
             try:
                 session.place_order(
-                    category="linear",
-                    symbol=SYMBOL,
-                    side="Sell",
-                    orderType="Market",       # Eseguito a mercato al tocco del trigger
-                    qty=str(MAX_TOTAL_QTY),   # Esattamente la somma totale (es. 972)
-                    triggerPrice=str(prezzo_sl),
-                    triggerBy="LastPrice",
-                    triggerDirection=2,        # FIXED: 2 indica che il prezzo scende verso lo SL
-                    reduceOnly=True           # Chiude la griglia senza aprire short
+                    category="linear", symbol=SYMBOL, side="Sell", orderType="Market",       
+                    qty=str(MAX_TOTAL_QTY), triggerPrice=str(prezzo_sl),
+                    triggerBy="LastPrice", triggerDirection=2, reduceOnly=True           
                 )
-                print(f" 🛑 [STOP LOSS NATIVO] Inserito su Bybit a {prezzo_sl:.5f} per {MAX_TOTAL_QTY} UAI (Visibile sul grafico)")
+                print(f" 🛑 [STOP LOSS NATIVO] Inserito su Bybit a {prezzo_sl:.5f} per {MAX_TOTAL_QTY} UAI")
             except Exception as sl_err:
                 print(f" ⚠️ Errore critico nell'inserimento dello Stop Loss nativo: {sl_err}")
 
