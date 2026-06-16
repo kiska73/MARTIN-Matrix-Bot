@@ -9,9 +9,9 @@ from pybit.unified_trading import HTTP
 SYMBOL = "UAIUSDT"
 
 # Le tue 3 Size personalizzabili (Modificabili a mano in base al prezzo)
-QTY_LIVELLO_NORMALE = 100  # Size standard con mercato tranquillo
-QTY_LIVELLO_ALTO = 50     # Size ridotta con mercato nervoso
-QTY_LIVELLO_ESTREMO = 20   # Size minima di emergenza con mercato impazzito
+QTY_LIVELLO_NORMALE = 90  # Size standard con mercato tranquillo
+QTY_LIVELLO_ALTO = 30     # Size ridotta con mercato nervoso
+QTY_LIVELLO_ESTREMO = 10   # Size minima di emergenza con mercato impazzito
 
 # SOGLE DI ATTIVAZIONE (In salita - Calcolate sulle 24 ore mobili)
 SOGLIA_ALTA_VOLATILITA = 20.0    # Sopra il 20%, passa a size 50
