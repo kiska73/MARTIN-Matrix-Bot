@@ -14,11 +14,11 @@ QTY_LIVELLO_ALTO = 50     # Size ridotta con mercato nervoso
 QTY_LIVELLO_ESTREMO = 20   # Size minima di emergenza con mercato impazzito
 
 # SOGLE DI ATTIVAZIONE (In salita - Calcolate sulle 24 ore mobili)
-SOGLIA_ALTA_VOLATILITA = 20.0    # Sopra il 20%, passa a size 50
-SOGLIA_ESTREMA_VOLATILITA = 40.0  # Sopra il 40%, passa a size 20
+SOGLIA_ALTA_VOLATILITA = 30.0    # Sopra il 20%, passa a size 50
+SOGLIA_ESTREMA_VOLATILITA = 70.0  # Sopra il 40%, passa a size 20
 
 # SOGLIE DI RIPRISTINO / RIENTRO (In discesa per evitare l'effetto altalena)
-RESET_DA_ALTO_A_NORMALE = 15.0   # Torna a 100 solo se scende sotto il 15%
+RESET_DA_ALTO_A_NORMALE = 20.0   # Torna a 100 solo se scende sotto il 15%
 RESET_DA_ESTREMO_A_ALTO = 30.0   # Torna a 50 solo se scende sotto il 30%
 
 # 8 Livelli: il bot moltiplicherà la tua BASE_QTY attuale per questi coefficienti
