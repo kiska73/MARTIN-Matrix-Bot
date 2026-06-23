@@ -25,7 +25,7 @@ RESET_DA_ESTREMO_A_ALTO = 35.0   # Torna a 50 solo se scende sotto il 30%
 GRID_MULTIPLIERS = [1, 1, 1.2, 1.4, 1.7, 2.1, 2.6, 2.8]
 
 # Calibri degli spaziatori per arrivare precisi al 16% di calo cumulativo
-GRID_SPACING = [0.0, 0.8, 1.0, 1.2, 1.5, 2.5, 4.0, 6.0]
+GRID_SPACING = [0.0, 0.8, 1.0, 1.2, 1.5, 3.0, 4.0, 6.0]
 
 # Target profit fisso della griglia (1% sul prezzo medio ponderato)
 TAKE_PROFIT_PERCENT = 1
