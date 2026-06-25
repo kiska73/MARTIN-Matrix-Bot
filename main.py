@@ -22,7 +22,7 @@ RESET_DA_ALTO_A_NORMALE = 18.0   # Torna a 100 solo se scende sotto il 15%
 RESET_DA_ESTREMO_A_ALTO = 35.0   # Torna a 50 solo se scende sotto il 30%
 
 # 8 Livelli: il bot moltiplicherà la tua BASE_QTY attuale per questi coefficienti
-GRID_MULTIPLIERS = [1, 1, 1.1, 1.3, 1.5, 2.4, 2.7, 2.8]
+GRID_MULTIPLIERS = [1, 1, 1.1, 1.3, 1.5, 2.4, 2.7, 2.9]
 
 # Calibri degli spaziatori per arrivare precisi al 16% di calo cumulativo
 GRID_SPACING = [0.0, 0.8, 1.0, 1.2, 1.5, 3.0, 4.0, 6.0]
