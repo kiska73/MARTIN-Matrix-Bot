@@ -7,8 +7,8 @@ from pybit.unified_trading import HTTP
 # ==============================================================================
 # CONFIGURAZIONE TELEGRAM
 # ==============================================================================
-TELEGRAM_BOT_TOKEN = '6916198243:AAFTF66uLYSeqviL5YnfGtbUkSjTwPzah6s'
-CHAT_ID = '820279313'
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.environ.get("CHAT_ID")
 
 def send_telegram_message(message):
     """Invia messaggio su Telegram"""
