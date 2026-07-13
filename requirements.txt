@@ -1,3 +1,2 @@
 pybit
-pandas
-requests
+python-telegram-bot==20.9
