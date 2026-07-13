@@ -1,4 +1,4 @@
-pybit==3.8.0
-pandas==2.2.0
+pybit
+pandas
 requests
 pytz
