@@ -123,7 +123,11 @@ def cancel_all_orders():
 def close_position():
     try:
         pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
-        size = float(pos.get("size", 0))
+        
+        # Filtro di sicurezza sulle stringhe vuote
+        raw_size_str = pos.get("size", "0")
+        size = float(raw_size_str) if raw_size_str != "" else 0.0
+        
         if size == 0:
             return False
         
@@ -192,15 +196,21 @@ while True:
         
         pos_data = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
         pos_side = pos_data.get("side", "None")
-        raw_size = float(pos_data["size"])
-
+        
+        # --- FILTRO DI SICUREZZA AGGIUNTO QUI ---
+        raw_size_str = pos_data.get("size", "0")
+        raw_size = float(raw_size_str) if raw_size_str != "" else 0.0
+        
         size = raw_size if (pos_side == "Buy" and raw_size > 0) else 0.0
-        avg_price = float(pos_data.get("avgPrice", 0))
+        
+        avg_price_str = pos_data.get("avgPrice", "0")
+        avg_price = float(avg_price_str) if avg_price_str != "" else 0.0
+        # -----------------------------------------
         
         active_orders = session.get_open_orders(category="linear", symbol=SYMBOL)["result"]["list"]
 
         # ----------------------------------------------------------------------
-        # 🔎 RIGA DI DEBUG AGGIUNTA PER CAPIRE PERCHÉ NON APRE ORDINI
+        # 🔎 RIGA DI DEBUG (Utile per monitorare le attività silenziose)
         # ----------------------------------------------------------------------
         print(f"🔎 DEBUG - Size in pancia: {size} | Prezzo: {price} | Cooldown terminato: {now - last_trade_time > COOLDOWN}")
 
