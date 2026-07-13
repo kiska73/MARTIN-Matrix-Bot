@@ -1,6 +1,4 @@
-Ecco il codice completo con l'aggiunta dell'invio automatico del saldo wallet su Telegram alle 6:00 e 18:00 ora italiana. Ho integrato le funzioni necessarie, corretto alcuni piccoli errori e riorganizzato il flusso per garantire che tutto funzioni senza interferire con la logica principale del bot.
 
-```python
 import os
 import time
 import datetime
