@@ -143,11 +143,14 @@ def get_current_price():
         return None
 
 def get_wallet_balance():
-    """Recupera il saldo totale dell'account Unified"""
+    """Recupera il saldo totale cercando prima nell'account UNIFIED"""
     try:
-        response = session.get_wallet_balance(accountType="UNIFIED")
-        balance = response['result']['list'][0]['totalEquity']
-        return float(balance)
+        response = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
+        if 'result' in response and 'list' in response['result'] and len(response['result']['list']) > 0:
+            # Prova a prendere l'equity totale
+            balance = response['result']['list'][0].get('totalEquity', 0)
+            return float(balance)
+        return None
     except Exception as e:
         print(f" ⚠️ Errore recupero saldo Bybit: {e}")
         return None
@@ -166,7 +169,7 @@ def send_telegram_message(message):
 # ==============================================================================
 # AVVIO BOT E CICLO CONTINUO
 # ==============================================================================
-print(" 🤖 BOT GRID LEVA 1 (v8.7 - Rolling 24h Volatility & Notifiche TG)")
+print(" 🤖 BOT GRID LEVA 1 (v8.8 - Rolling 24h Volatility & Notifiche TG Fixed)")
 print(f" Strumento: {SYMBOL}")
 print(f"  -> MODALITÀ NORMALE: Size {QTY_LIVELLO_NORMALE}")
 print(f"  -> MODALITÀ ALTA VOLATILITÀ (> {SOGLIA_ALTA_VOLATILITA}%): Size {QTY_LIVELLO_ALTO} (Rientro < {RESET_DA_ALTO_A_NORMALE}%)")
@@ -178,7 +181,7 @@ saldo_iniziale = get_wallet_balance()
 if saldo_iniziale is not None:
     msg_avvio = f"🚀 Bot Grid ({SYMBOL}) Avviato con successo!\n🏦 Saldo iniziale: {saldo_iniziale:.2f} USDT"
 else:
-    msg_avvio = f"🚀 Bot Grid ({SYMBOL}) Avviato!\n⚠️ Impossibile recuperare il saldo iniziale."
+    msg_avvio = f"🚀 Bot Grid ({SYMBOL}) Avviato!\n⚠️ Impossibile leggere il saldo in questo momento, ma il bot è operativo."
 send_telegram_message(msg_avvio)
 print(" 📩 Messaggio di avvio inviato su Telegram.")
 # -------------------------------------
@@ -189,19 +192,21 @@ while True:
         price = get_current_price()
         
         # ==================== CONTROLLO NOTIFICHE TELEGRAM (6:00 e 18:00) ====================
-        # Ottiene l'ora corrente nel fuso orario italiano
         tz_italy = pytz.timezone('Europe/Rome')
         now_italy = datetime.now(tz_italy)
         current_hour = now_italy.hour
 
-        # Se sono le 6 o le 18, e non abbiamo ancora mandato il messaggio per quest'ora
+        # Se sono le 6 o le 18, e non abbiamo ancora provato a mandare il messaggio per quest'ora
         if current_hour in (6, 18) and last_telegram_sent_hour != current_hour:
             saldo = get_wallet_balance()
             if saldo is not None:
                 msg = f"🏦 Report Saldo Wallet Bybit:\n💰 {saldo:.2f} USDT"
                 send_telegram_message(msg)
                 print(f" 📩 Inviato aggiornamento Telegram: {saldo:.2f} USDT")
-                last_telegram_sent_hour = current_hour
+            
+            # CRITICO: Aggiorna SEMPRE il tracker, anche se il saldo fallisce!
+            # Questo impedisce al bot di bloccarsi in un loop di errori.
+            last_telegram_sent_hour = current_hour
 
         # Resetta il tracker delle notifiche durante le altre ore
         if current_hour not in (6, 18):
