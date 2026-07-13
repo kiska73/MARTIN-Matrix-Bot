@@ -291,4 +291,4 @@ print(f" Stop Loss Fisso (Nativo): -{STOP_LOSS_PERCENT}%\n")while True:
 
 except Exception as e:
     print(f" [ALLERTA SISTEMA] Errore nel ciclo continuo: {e}")
-    time.sleep(5) questo funziona ma deve solo aggiungere che mi manda un messaggio telegram con saldo alle 6 e allle 18. TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")CHAT_ID = os.environ.get("CHAT_ID")
+    time.sleep(5) )
