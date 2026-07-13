@@ -87,6 +87,32 @@ def round_qty(qty):
         return int(round(qty))
     return round(qty, QTY_DECIMALS)
 
+
+def get_wallet_balance():
+    """Versione aggiornata per Unified Trading Account"""
+    try:
+        response = session.get_wallet_balance(accountType="UNIFIED")
+        # print("DEBUG Wallet full response:", response)  # Attiva solo se serve debug
+
+        account = response["result"]["list"][0]
+        
+        # Preferiamo totalWalletBalance
+        total_wallet = float(account.get("totalWalletBalance", 0))
+        if total_wallet > 0:
+            return total_wallet
+
+        # Fallback: cerca USDT nei coin
+        for coin in account.get("coin", []):
+            if coin.get("coin") == "USDT":
+                return float(coin.get("walletBalance", 0))
+        
+        return float(account.get("totalAvailableBalance", 0))
+        
+    except Exception as e:
+        print(f" ⚠️ Errore wallet: {e}")
+        return 0.0
+
+
 def get_daily_volatility():
     try:
         kline_data = session.get_kline(
@@ -106,31 +132,25 @@ def get_daily_volatility():
         print(f" ⚠️ Errore volatilità: {e}")
         return 0.0
 
-def get_wallet_balance():
-    try:
-        balance = session.get_wallet_balance(accountType="UNIFIED")["result"]["list"][0]
-        for coin in balance["coin"]:
-            if coin["coin"] == "USDT":
-                return float(coin.get("walletBalance", 0))
-        return 0.0
-    except Exception as e:
-        print(f" ⚠️ Errore wallet: {e}")
-        return 0.0
 
 def get_position_info():
     try:
         pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
         size = float(pos.get("size", 0))
-        if size == 0:
+        side = pos.get("side")
+        
+        if size <= 0 or side != "Buy":
             return None
+            
         return {
             "size": size,
-            "side": pos.get("side"),
+            "side": side,
             "avg_price": float(pos.get("avgPrice", 0)),
             "unrealized_pnl": float(pos.get("unrealisedPnl", 0))
         }
     except:
         return None
+
 
 def cancel_all_orders():
     try:
@@ -139,6 +159,7 @@ def cancel_all_orders():
         return True
     except:
         return False
+
 
 def close_position():
     try:
@@ -157,6 +178,7 @@ def close_position():
         print(f" Errore chiusura posizione: {e}")
         return False
 
+
 def get_current_price():
     try:
         ticker = session.get_tickers(category="linear", symbol=SYMBOL)
@@ -168,15 +190,14 @@ def get_current_price():
 # ==============================================================================
 # AVVIO BOT
 # ==============================================================================
-print(" 🤖 BOT GRID UAIUSDT v8.9 - Completo con Telegram")
+print(" 🤖 BOT GRID UAIUSDT v9.0 - FIXED & IMPROVED")
 print(f" Strumento: {SYMBOL}")
 
-# Report iniziale
 initial_balance = get_wallet_balance()
 pos_info = get_position_info()
 current_price = get_current_price()
 
-start_msg = f"""🚀 <b>BOT AVVIATO CORRETTAMENTE</b>
+start_msg = f"""🚀 <b>BOT AVVIATO CORRETTAMENTE v9.0</b>
 
 💰 <b>Saldo Wallet:</b> <code>{initial_balance:.2f} USDT</code>
 """
@@ -211,7 +232,7 @@ while True:
         m = current_dt.minute
 
         if h == 6 and m == 0:
-            if last_notification_6 is None or last_notification_6.date() != current_dt.date():
+            if last_notification_6 is None or (last_notification_6.date() != current_dt.date()):
                 balance = get_wallet_balance()
                 pos = get_position_info()
                 msg = f"""🕕 <b>Report Mattutino - 06:00</b>
@@ -219,14 +240,12 @@ while True:
 💰 <b>Wallet:</b> <code>{balance:.2f} USDT</code>
 🔄 <b>Stato Rischio:</b> {stato_rischio_attuale}
 """
-
                 if pos:
-                    current_p = price if price else 0
                     pnl_pct = (pos["unrealized_pnl"] / (pos["avg_price"] * pos["size"])) * 100 if pos["size"] > 0 else 0
                     msg += f"""📍 <b>POSIZIONE APERTA</b>
    • Size: <code>{pos['size']} UAI</code>
    • Entry: <code>{pos['avg_price']:.5f}</code>
-   • Prezzo: <code>{current_p:.5f}</code>
+   • Prezzo: <code>{price:.5f}</code>
    • PnL: <code>{pos['unrealized_pnl']:.2f} USDT</code> (<code>{pnl_pct:+.2f}%</code>)
 """
                 else:
@@ -237,7 +256,7 @@ while True:
                 last_notification_6 = current_dt
 
         elif h == 18 and m == 0:
-            if last_notification_18 is None or last_notification_18.date() != current_dt.date():
+            if last_notification_18 is None or (last_notification_18.date() != current_dt.date()):
                 balance = get_wallet_balance()
                 pos = get_position_info()
                 msg = f"""🕕 <b>Report Serale - 18:00</b>
@@ -245,14 +264,12 @@ while True:
 💰 <b>Wallet:</b> <code>{balance:.2f} USDT</code>
 🔄 <b>Stato Rischio:</b> {stato_rischio_attuale}
 """
-
                 if pos:
-                    current_p = price if price else 0
                     pnl_pct = (pos["unrealized_pnl"] / (pos["avg_price"] * pos["size"])) * 100 if pos["size"] > 0 else 0
                     msg += f"""📍 <b>POSIZIONE APERTA</b>
    • Size: <code>{pos['size']} UAI</code>
    • Entry: <code>{pos['avg_price']:.5f}</code>
-   • Prezzo: <code>{current_p:.5f}</code>
+   • Prezzo: <code>{price:.5f}</code>
    • PnL: <code>{pos['unrealized_pnl']:.2f} USDT</code> (<code>{pnl_pct:+.2f}%</code>)
 """
                 else:
@@ -276,10 +293,10 @@ while True:
             prezzo_inizio_griglia = 0.0
 
         # ==================== TARGET PROFIT ====================
-        if size > 0:
+        if size > 0 and price:
             target_tp = round_price(avg_price * (1 + TAKE_PROFIT_PERCENT / 100))
 
-            if price and price >= target_tp:
+            if price >= target_tp:
                 print(f" 🎯 Target Profit raggiunto ({price} >= {target_tp}). Chiusura griglia.")
                 cancel_all_orders()
                 close_position()
@@ -288,13 +305,14 @@ while True:
                 prezzo_inizio_griglia = 0.0
 
             elif abs(target_tp - last_tp_price) > 0.00001 and (now - last_tp_update_time > 10):
-                tp_orders = [o for o in active_orders if o.get("side") == "Sell" and o.get("orderType") == "Limit" and o.get("reduceOnly")]
-                if tp_orders:
-                    try:
-                        session.cancel_order(category="linear", symbol=SYMBOL, orderId=tp_orders[0]["orderId"])
-                    except:
-                        pass
-
+                # Cancella TP vecchio
+                for o in active_orders:
+                    if o.get("side") == "Sell" and o.get("orderType") == "Limit" and o.get("reduceOnly"):
+                        try:
+                            session.cancel_order(category="linear", symbol=SYMBOL, orderId=o["orderId"])
+                        except:
+                            pass
+                # Inserisci nuovo TP
                 try:
                     session.place_order(
                         category="linear", symbol=SYMBOL, side="Sell", orderType="Limit",
@@ -303,8 +321,8 @@ while True:
                     last_tp_price = target_tp
                     last_tp_update_time = now
                     print(f" 📈 TP aggiornato a {target_tp}")
-                except:
-                    pass
+                except Exception as e:
+                    print(f"Errore aggiornamento TP: {e}")
 
         # ==================== APERTURA NUOVA GRIGLIA ====================
         elif size == 0 and (now - last_trade_time > COOLDOWN):
@@ -313,14 +331,13 @@ while True:
             # Macchina a stati rischio
             if daily_vol > SOGLIA_ESTREMA_VOLATILITA:
                 stato_rischio_attuale = "ESTREMO"
-            elif daily_vol > SOGLIA_ALTA_VOLATILITA and stato_rischio_attuale != "ESTREMO":
+            elif daily_vol > SOGLIA_ALTA_VOLATILITA:
                 stato_rischio_attuale = "ALTO"
             elif stato_rischio_attuale == "ESTREMO" and daily_vol < RESET_DA_ESTREMO_A_ALTO:
                 stato_rischio_attuale = "ALTO" if daily_vol >= RESET_DA_ALTO_A_NORMALE else "NORMALE"
             elif stato_rischio_attuale == "ALTO" and daily_vol < RESET_DA_ALTO_A_NORMALE:
                 stato_rischio_attuale = "NORMALE"
 
-            # Assegna quantità base
             if stato_rischio_attuale == "ESTREMO":
                 BASE_QTY = QTY_LIVELLO_ESTREMO
             elif stato_rischio_attuale == "ALTO":
@@ -328,32 +345,42 @@ while True:
             else:
                 BASE_QTY = QTY_LIVELLO_NORMALE
 
-            MAX_TOTAL_QTY = round_qty(sum([BASE_QTY * m for m in GRID_MULTIPLIERS]))
-            safe_price = price if price is not None else 0.0
-
-            print(f"\n 🛒 Avvio nuova griglia @ {safe_price:.4f} | Rischio: {stato_rischio_attuale} | Size base: {BASE_QTY}")
+            print(f"\n 🛒 Avvio nuova griglia @ {price:.5f} | Rischio: {stato_rischio_attuale} | Size base: {BASE_QTY} | Vol: {daily_vol:.1f}%")
 
             cancel_all_orders()
             time.sleep(1.0)
 
             # Livello 1 - Market
             qty_l1 = round_qty(BASE_QTY * GRID_MULTIPLIERS[0])
-            session.place_order(category="linear", symbol=SYMBOL, side="Buy", orderType="Market", qty=str(qty_l1))
-            print(f" 🟢 [L1] Market eseguito: {qty_l1} UAI")
+            try:
+                session.place_order(
+                    category="linear", symbol=SYMBOL, side="Buy", 
+                    orderType="Market", qty=str(qty_l1)
+                )
+                print(f" 🟢 [L1] Market eseguito: {qty_l1} UAI")
+            except Exception as e:
+                print(f"❌ Errore Market Buy: {e}")
+                time.sleep(5)
+                continue
 
             time.sleep(2.0)
+            
             new_pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
-            avg = float(new_pos["avgPrice"])
+            avg = float(new_pos.get("avgPrice", 0))
             prezzo_inizio_griglia = avg
             prezzo_sl = round_price(avg * (1 - STOP_LOSS_PERCENT / 100))
 
-            # Stop Loss Nativo
-            session.place_order(
-                category="linear", symbol=SYMBOL, side="Sell", orderType="Market",
-                qty=str(MAX_TOTAL_QTY), triggerPrice=str(prezzo_sl),
-                triggerBy="LastPrice", triggerDirection=2, reduceOnly=True
-            )
-            print(f" 🛑 Stop Loss inserito a {prezzo_sl:.5f}")
+            # Stop Loss
+            try:
+                session.place_order(
+                    category="linear", symbol=SYMBOL, side="Sell", orderType="Market",
+                    qty=str(round_qty(BASE_QTY * sum(GRID_MULTIPLIERS))), 
+                    triggerPrice=str(prezzo_sl),
+                    triggerBy="LastPrice", triggerDirection=2, reduceOnly=True
+                )
+                print(f" 🛑 Stop Loss inserito a {prezzo_sl:.5f}")
+            except Exception as e:
+                print(f"⚠️ Errore Stop Loss: {e}")
 
             # Livelli Limit
             accumulated_drop = 0
@@ -362,11 +389,14 @@ while True:
                 entry_price = round_price(prezzo_inizio_griglia * (1 - accumulated_drop / 100))
                 qty_livello = round_qty(BASE_QTY * GRID_MULTIPLIERS[i])
                 
-                session.place_order(
-                    category="linear", symbol=SYMBOL, side="Buy",
-                    orderType="Limit", qty=str(qty_livello), price=str(entry_price)
-                )
-                print(f" 📥 [L{i+1}] Limit @ {entry_price:.5f} | Qty: {qty_livello}")
+                try:
+                    session.place_order(
+                        category="linear", symbol=SYMBOL, side="Buy",
+                        orderType="Limit", qty=str(qty_livello), price=str(entry_price)
+                    )
+                    print(f" 📥 [L{i+1}] Limit @ {entry_price:.5f} | Qty: {qty_livello}")
+                except Exception as e:
+                    print(f"⚠️ Errore Limit L{i+1}: {e}")
 
             last_trade_time = now
             print(" ✅ Griglia configurata con successo.\n")
