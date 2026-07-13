@@ -1,6 +1,8 @@
 import os
 import time
 import pandas as pd
+from datetime import datetime
+from zoneinfo import ZoneInfo
 from pybit.unified_trading import HTTP
 
 # ==============================================================================
@@ -53,6 +55,10 @@ prezzo_inizio_griglia = 0.0
 stato_rischio_attuale = "NORMALE"  
 BASE_QTY = QTY_LIVELLO_NORMALE   # Inizializzazione iniziale
 
+# Variabili per gestire il controllo del saldo orario (NO TELEGRAM)
+ultimo_orario_saldo = -1
+FUSO_ORARIO_ITALIA = ZoneInfo("Europe/Rome")
+
 # Connessione alle API di Bybit
 session = HTTP(
     testnet=False, 
@@ -91,7 +97,7 @@ def get_daily_volatility():
         highs = [float(candle[2]) for candle in kline_data]
         lows = [float(candle[3]) for candle in kline_data]
         
-        # Il prezzo di apertura di 24 ore fa (l'ultima candela nella lista ritornata da Bybit)
+        # Il prezzo di apertura di 24 ore fa
         open_24h_ago = float(kline_data[-1][1]) 
         
         max_high = max(highs)
@@ -142,10 +148,24 @@ def get_current_price():
     except:
         return None
 
+def stampa_saldo_conto():
+    """
+    Recupera e stampa a schermo il saldo USDT dell'account Unificato.
+    """
+    try:
+        response = session.get_wallet_balance(accountType="UNIFIED")
+        list_coins = response['result']['list'][0]['coin']
+        usdt_balance = next((coin['walletBalance'] for coin in list_coins if coin['coin'] == 'USDT'), "0.0")
+        print(f"\n=======================================================")
+        print(f" 💰 [REPORT SALDO] Attuale: {usdt_balance} USDT")
+        print(f"=======================================================\n")
+    except Exception as e:
+        print(f" ⚠️ [ERRORE SALDO] Impossibile recuperare il saldo: {e}")
+
 # ==============================================================================
 # AVVIO BOT E CICLO CONTINUO
 # ==============================================================================
-print(" 🤖 BOT GRID LEVA 1 (v8.7 - Rolling 24h Volatility & 3 Scaglioni)")
+print(" 🤖 BOT GRID LEVA 1 (v8.7 - Rolling 24h Volatility & 3 Scaglioni + Log Saldo)")
 print(f" Strumento: {SYMBOL}")
 print(f"  -> MODALITÀ NORMALE: Size {QTY_LIVELLO_NORMALE}")
 print(f"  -> MODALITÀ ALTA VOLATILITÀ (> {SOGLIA_ALTA_VOLATILITA}%): Size {QTY_LIVELLO_ALTO} (Rientro < {RESET_DA_ALTO_A_NORMALE}%)")
@@ -155,6 +175,19 @@ print(f" Stop Loss Fisso (Nativo): -{STOP_LOSS_PERCENT}%\n")
 while True:
     try:
         now = time.time()
+        
+        # ==================== CONTROLLO ORARIO SALDO ====================
+        ora_attuale_italia = datetime.now(FUSO_ORARIO_ITALIA)
+        ora = ora_attuale_italia.hour
+        
+        if ora in (6, 18) and ora != ultimo_orario_saldo:
+            stampa_saldo_conto()
+            ultimo_orario_saldo = ora  
+            
+        if ora not in (6, 18):
+            ultimo_orario_saldo = -1
+        # ================================================================
+
         price = get_current_price()
         
         pos_data = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
@@ -165,6 +198,11 @@ while True:
         avg_price = float(pos_data.get("avgPrice", 0))
         
         active_orders = session.get_open_orders(category="linear", symbol=SYMBOL)["result"]["list"]
+
+        # ----------------------------------------------------------------------
+        # 🔎 RIGA DI DEBUG AGGIUNTA PER CAPIRE PERCHÉ NON APRE ORDINI
+        # ----------------------------------------------------------------------
+        print(f"🔎 DEBUG - Size in pancia: {size} | Prezzo: {price} | Cooldown terminato: {now - last_trade_time > COOLDOWN}")
 
         if size == 0:
             last_tp_price = 0.0
@@ -216,23 +254,23 @@ while True:
             # --- MACCHINA A STATI DELLA VOLATILITÀ (CON FINESTRA ROLLING 24H) ---
             daily_vol = get_daily_volatility()
             
-            # 1. VALUTAZIONE IN SALITA (Se il mercato peggiora, aumentiamo la protezione)
+            # 1. VALUTAZIONE IN SALITA 
             if daily_vol > SOGLIA_ESTREMA_VOLATILITA:
                 stato_rischio_attuale = "ESTREMO"
             elif daily_vol > SOGLIA_ALTA_VOLATILITA and stato_rischio_attuale != "ESTREMO":
                 stato_rischio_attuale = "ALTO"
             
-            # 2. VALUTAZIONE IN DISCESA (Se il mercato si calma, verifichiamo i filtri di rientro)
+            # 2. VALUTAZIONE IN DISCESA 
             elif stato_rischio_attuale == "ESTREMO" and daily_vol < RESET_DA_ESTREMO_A_ALTO:
                 if daily_vol < RESET_DA_ALTO_A_NORMALE:
-                    stato_rischio_attuale = "NORMALE" # Collasso totale della volatilità
+                    stato_rischio_attuale = "NORMALE" 
                 else:
-                    stato_rischio_attuale = "ALTO"    # Allentamento parziale
+                    stato_rischio_attuale = "ALTO"    
                     
             elif stato_rischio_attuale == "ALTO" and daily_vol < RESET_DA_ALTO_A_NORMALE:
                 stato_rischio_attuale = "NORMALE"
 
-            # 3. ASSEGNAZIONE DELLE QUANTITÀ IN BASE ALLO STATO DECISO
+            # 3. ASSEGNAZIONE DELLE QUANTITÀ 
             if stato_rischio_attuale == "ESTREMO":
                 BASE_QTY = QTY_LIVELLO_ESTREMO
                 print(f" 🔥 [RISCHIO: ESTREMO] Volatilità 24h mobili al {daily_vol:.2f}% (Soglia > {SOGLIA_ESTREMA_VOLATILITA}%)")
@@ -246,7 +284,6 @@ while True:
                 print(f" ✅ [RISCHIO: NORMALE] Volatilità 24h mobili regolare: {daily_vol:.2f}%.")
                 print(f" 📈 SIZE STANDARD: Utilizzo la quota intera di {BASE_QTY} UAI.")
 
-            # Ricalcolo preventivo della quantità massima reale per lo Stop Loss condizionale
             MAX_TOTAL_QTY = round_qty(sum([BASE_QTY * m for m in GRID_MULTIPLIERS]))
 
             print(f"\n 🛒 Avvio ciclo griglia 8 livelli @ {safe_price:.4f} (Max Qty Griglia: {MAX_TOTAL_QTY} UAI)")
@@ -272,7 +309,6 @@ while True:
             prezzo_sl = round_price(prezzo_inizio_griglia * (1 - STOP_LOSS_PERCENT / 100))
             print(f" 📌 Prezzo base impostato a: {prezzo_inizio_griglia:.5f}")
             
-            # Inserimento dello Stop Loss nativo dinamico
             try:
                 session.place_order(
                     category="linear", symbol=SYMBOL, side="Sell", orderType="Market",       
