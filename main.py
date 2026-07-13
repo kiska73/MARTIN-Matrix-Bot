@@ -2,7 +2,6 @@ import os
 import time
 import datetime
 import asyncio
-import pandas as pd
 from pybit.unified_trading import HTTP
 import telegram
 
@@ -11,16 +10,16 @@ import telegram
 # ==============================================================================
 SYMBOL = "UAIUSDT"
 
-# Le tue 3 Size personalizzabili
-QTY_LIVELLO_NORMALE = 100   # Size standard
-QTY_LIVELLO_ALTO = 50       # Size ridotta
-QTY_LIVELLO_ESTREMO = 20    # Size minima di emergenza
+# Quantità per livello di rischio
+QTY_LIVELLO_NORMALE = 100
+QTY_LIVELLO_ALTO = 50
+QTY_LIVELLO_ESTREMO = 20
 
-# SOGLIE DI ATTIVAZIONE (Volatilità 24h)
+# Soglie di volatilità
 SOGLIA_ALTA_VOLATILITA = 25.0
 SOGLIA_ESTREMA_VOLATILITA = 50.0
 
-# SOGLIE DI RIPRISTINO
+# Soglie di reset
 RESET_DA_ALTO_A_NORMALE = 18.0
 RESET_DA_ESTREMO_A_ALTO = 35.0
 
@@ -30,11 +29,9 @@ GRID_SPACING = [0.0, 0.8, 1.0, 1.2, 1.5, 3.0, 4.0, 6.0]
 
 TAKE_PROFIT_PERCENT = 1.0
 STOP_LOSS_PERCENT = 21.0
-COOLDOWN = 30  # secondi
+COOLDOWN = 30  # secondi di pausa dopo chiusura griglia
 
-# ==============================================================================
-# DECIMALI STRUMENTO
-# ==============================================================================
+# Decimali
 PRICE_DECIMALS = 5
 QTY_DECIMALS = 0
 
@@ -180,9 +177,9 @@ def get_current_price():
 
 
 # ==============================================================================
-# AVVIO BOT
+# AVVIO BOT - CICLO PRINCIPALE
 # ==============================================================================
-print(" BOT GRID LEVA 1 (v8.7 - Rolling 24h Volatility)")
+print("🚀 BOT GRID LEVA 1 (v8.7 - Rolling 24h Volatility) AVVIATO")
 print(f" Strumento: {SYMBOL}\n")
 
 while True:
@@ -191,10 +188,10 @@ while True:
         now = time.time()
         price = get_current_price()
 
-        # Posizione attuale
+        # === Lettura posizione ===
         pos_data = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
         pos_side = pos_data.get("side", "None")
-        raw_size = float(pos_data["size"])
+        raw_size = float(pos_data.get("size", 0))
         size = raw_size if (pos_side == "Buy" and raw_size > 0) else 0.0
         avg_price = float(pos_data.get("avgPrice", 0))
 
@@ -204,12 +201,12 @@ while True:
             last_tp_price = 0.0
             prezzo_inizio_griglia = 0.0
 
-        # ==================== GESTIONE TAKE PROFIT ====================
+        # ==================== TAKE PROFIT ====================
         if size > 0 and price:
             target_tp = round_price(avg_price * (1 + TAKE_PROFIT_PERCENT / 100))
 
             if price >= target_tp:
-                print(f" Target raggiunto! Chiusura griglia a {price}")
+                print(f" 🎯 Target Profit raggiunto a {price}! Chiusura griglia.")
                 cancel_all_orders()
                 close_position()
                 last_trade_time = now
@@ -217,7 +214,6 @@ while True:
                 prezzo_inizio_griglia = 0.0
 
             elif (abs(target_tp - last_tp_price) > 1e-5) and (now - last_tp_update_time > 10):
-                # Aggiorna TP Limit
                 tp_orders = [o for o in active_orders if o.get("side") == "Sell" 
                            and o.get("orderType") == "Limit" and o.get("reduceOnly") is True]
 
@@ -234,7 +230,7 @@ while True:
                     )
                     last_tp_price = target_tp
                     last_tp_update_time = now
-                    print(f" TP aggiornato → {target_tp}")
+                    print(f" 🔄 TP aggiornato a {target_tp}")
                 except:
                     pass
 
@@ -245,32 +241,29 @@ while True:
             # --- Gestione Volatilità ---
             daily_vol = get_daily_volatility()
 
-            # Aumenta rischio
             if daily_vol > SOGLIA_ESTREMA_VOLATILITA:
                 stato_rischio_attuale = "ESTREMO"
             elif daily_vol > SOGLIA_ALTA_VOLATILITA and stato_rischio_attuale != "ESTREMO":
                 stato_rischio_attuale = "ALTO"
-
-            # Riduci rischio
             elif stato_rischio_attuale == "ESTREMO" and daily_vol < RESET_DA_ESTREMO_A_ALTO:
                 stato_rischio_attuale = "ALTO" if daily_vol >= RESET_DA_ALTO_A_NORMALE else "NORMALE"
             elif stato_rischio_attuale == "ALTO" and daily_vol < RESET_DA_ALTO_A_NORMALE:
                 stato_rischio_attuale = "NORMALE"
 
-            # Assegna quantità
+            # Assegna BASE_QTY
             if stato_rischio_attuale == "ESTREMO":
                 BASE_QTY = QTY_LIVELLO_ESTREMO
-                print(f" [RISCHIO: ESTREMO] Vol {daily_vol:.2f}% → Size {BASE_QTY}")
+                print(f" [RISCHIO ESTREMO] Volatilità {daily_vol:.2f}% → Size {BASE_QTY}")
             elif stato_rischio_attuale == "ALTO":
                 BASE_QTY = QTY_LIVELLO_ALTO
-                print(f" [RISCHIO: ALTO] Vol {daily_vol:.2f}% → Size {BASE_QTY}")
+                print(f" [RISCHIO ALTO] Volatilità {daily_vol:.2f}% → Size {BASE_QTY}")
             else:
                 BASE_QTY = QTY_LIVELLO_NORMALE
-                print(f" [RISCHIO: NORMALE] Vol {daily_vol:.2f}% → Size {BASE_QTY}")
+                print(f" [RISCHIO NORMALE] Volatilità {daily_vol:.2f}% → Size {BASE_QTY}")
 
             MAX_TOTAL_QTY = round_qty(sum(BASE_QTY * m for m in GRID_MULTIPLIERS))
 
-            print(f"\n Avvio nuova griglia @ {safe_price:.4f} (Max Qty: {MAX_TOTAL_QTY})")
+            print(f"\n🟢 Avvio nuova griglia a {safe_price:.4f} (Max Qty: {MAX_TOTAL_QTY})")
             cancel_all_orders()
             time.sleep(1.0)
 
@@ -280,21 +273,21 @@ while True:
                 category="linear", symbol=SYMBOL, side="Buy",
                 orderType="Market", qty=str(qty_l1)
             )
-            print(f" [L1] Market eseguito: {qty_l1} UAI")
+            print(f" [L1] Market eseguito → {qty_l1} UAI")
 
             time.sleep(2.0)
             new_pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
             prezzo_inizio_griglia = float(new_pos["avgPrice"])
             prezzo_sl = round_price(prezzo_inizio_griglia * (1 - STOP_LOSS_PERCENT / 100))
 
-            # Stop Loss Nativo
+            # Stop Loss
             session.place_order(
                 category="linear", symbol=SYMBOL, side="Sell",
                 orderType="Market", qty=str(MAX_TOTAL_QTY),
                 triggerPrice=str(prezzo_sl), triggerBy="LastPrice",
                 triggerDirection=2, reduceOnly=True
             )
-            print(f" [SL] Inserito a {prezzo_sl:.5f}")
+            print(f" [STOP LOSS] Inserito a {prezzo_sl:.5f}")
 
             # Livelli Limit
             accumulated_drop = 0.0
@@ -307,13 +300,13 @@ while True:
                     category="linear", symbol=SYMBOL, side="Buy",
                     orderType="Limit", qty=str(qty_livello), price=str(entry_price)
                 )
-                print(f" [L{i+1}] Limit @ {entry_price:.5f} | Qty: {qty_livello} | -{accumulated_drop:.1f}%")
+                print(f" [L{i+1}] Limit @ {entry_price:.5f} | Qty: {qty_livello} | Drop: -{accumulated_drop:.1f}%")
 
             last_trade_time = now
-            print(" Griglia configurata con successo.\n")
+            print("✅ Griglia configurata e attiva.\n")
 
         time.sleep(2)
 
     except Exception as e:
-        print(f" [ERRORE] {e}")
+        print(f" [ERRORE CICLO] {e}")
         time.sleep(5)
