@@ -1,29 +1,22 @@
-
 import os
 import time
-import datetime
-import pytz
-import requests
 import pandas as pd
+import requests
+from datetime import datetime
+import pytz
 from pybit.unified_trading import HTTP
-
-# ==============================================================================
-# CONFIGURAZIONE TELEGRAM (da Environment Variables)
-# ==============================================================================
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "6916198243:AAFTF66LYSeqviL5YnfGtbUkSjTwPah6s")
-CHAT_ID = os.environ.get("CHAT_ID", "820279313")
 
 # ==============================================================================
 # CONFIGURAZIONE OPERATIVA - QUANTITÀ FISSE (UAI)
 # ==============================================================================
 SYMBOL = "UAIUSDT"
 
-# Le tue 3 Size personalizzabili (Modificabili a mano in al prezzo)
+# Le tue 3 Size personalizzabili (Modificabili a mano in base al prezzo)
 QTY_LIVELLO_NORMALE = 100  # Size standard con mercato tranquillo
 QTY_LIVELLO_ALTO = 50     # Size ridotta con mercato nervoso
 QTY_LIVELLO_ESTREMO = 20   # Size minima di emergenza con mercato impazzito
 
-# SOGLIE DI ATTIVAZIONE (In salita - Calcolate sulle 24 ore mobili)
+# SOGLE DI ATTIVAZIONE (In salita - Calcolate sulle 24 ore mobili)
 SOGLIA_ALTA_VOLATILITA = 25.0    # Sopra il 20%, passa a size 50
 SOGLIA_ESTREMA_VOLATILITA = 50.0  # Sopra il 40%, passa a size 20
 
@@ -35,7 +28,7 @@ RESET_DA_ESTREMO_A_ALTO = 35.0   # Torna a 50 solo se scende sotto il 30%
 GRID_MULTIPLIERS = [1, 1, 1.1, 1.3, 1.5, 2.4, 2.7, 2.9]
 
 # Calibri degli spaziatori per arrivare precisi al 16% di calo cumulativo
-GRID_SPAC = [0.0, 0.8, 1.0, 1.2, 1.5, 3.0, 4.0, 6.0]
+GRID_SPACING = [0.0, 0.8, 1.0, 1.2, 1.5, 3.0, 4.0, 6.0]
 
 # Target profit fisso della griglia (1% sul prezzo medio ponderato)
 TAKE_PROFIT_PERCENT = 1
@@ -46,10 +39,14 @@ STOP_LOSS_PERCENT = 21
 COOLDOWN = 30  # Secondi di pausa dopo la chiusura di una griglia
 
 # ==============================================================================
-# DECIMALI STRUMENTO
+# DECIMALI STRUMENTO E TELEGRAM
 # ==============================================================================
 PRICE_DECIMALS = 5
 QTY_DECIMALS = 0 
+
+# Recupera da Environment Variables, usa quelli di default se non trovati
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "6916198243:AAFTF66uLYSeqviL5YnfGtbUkSjTwPzah6s")
+CHAT_ID = os.environ.get("CHAT_ID", "820279313")
 
 # ==============================================================================
 # VARIABILI DI STATO (TRACKING AUTOMATICO)
@@ -58,14 +55,11 @@ last_trade_time = 0
 last_tp_price = 0.0
 last_tp_update_time = 0
 prezzo_inizio_griglia = 0.0 
+last_telegram_sent_hour = None # Tracking per i messaggi Telegram
 
 # Livello di rischio corrente: "NORMALE", "ALTO", "ESTREMO"
 stato_rischio_attuale = "NORMALE"  
 BASE_QTY = QTY_LIVELLO_NORMALE   # Inizializzazione iniziale
-
-# Variabili per invio Telegram saltuario (una volta al giorno)
-ultimo_invio_6 = None  # Data dell'ultimo invio alle 06:00
-ultimo_invio_18 = None # Data dell'ultimo invio alle 18:00
 
 # Connessione alle API di Bybit
 session = HTTP(
@@ -86,32 +80,24 @@ def round_qty(qty):
     return round(qty, QTY_DECIMALS)
 
 def get_daily_volatility():
-    """
-    Scarica le ultime 24 candele orarie (1H) per calcolare la volatilità 
-    reale delle ultime 24 ore mobili, evitando il reset di mezzanotte.
-    """
     try:
         kline_data = session.get_kline(
             category="linear",
             symbol=SYMBOL,
-            interval="60", # 60 minuti = 1 ora
-            limit=24       # Prende le ultime 24 ore
+            interval="60",
+            limit=24
         )["result"]["list"]
         
         if not kline_data:
             return 0.0
             
-        # Estraiamo i prezzi di High e Low da tutte le 24 candele
         highs = [float(candle[2]) for candle in kline_data]
         lows = [float(candle[3]) for candle in kline_data]
-        
-        # Il prezzo di apertura di 24 ore fa (l'ultima candela nella lista ritornata da Bybit)
         open_24h_ago = float(kline_data[-1][1]) 
         
         max_high = max(highs)
         min_low = min(lows)
         
-        # Formula della volatilità mobile sulle 24 ore
         volatility = ((max_high - min_low) / open_24h_ago) * 100
         return volatility
     except Exception as e:
@@ -142,7 +128,7 @@ def close_position():
             category="linear", symbol=SYMBOL, side=side, orderType="Market", 
             qty=str(abs(size)), reduceOnly=True
         )
-        print(f" 💥 POSIZIONE CHIUSA A MERCATO | Size: {size}AI")
+        print(f" 💥 POSIZIONE CHIUSA A MERCATO | Size: {size} UAI")
         time.sleep(1.0)
         return True
     except Exception as e:
@@ -156,46 +142,31 @@ def get_current_price():
     except:
         return None
 
-def get_wallet_balance_usdt():
-    """Recupera il saldo del wallet spot o derivati in USDT (es. unified account)"""
+def get_wallet_balance():
+    """Recupera il saldo totale dell'account Unified"""
     try:
-        # Per conti Unificati di Bybit si usa get_wallet_balance
-        wallet = session.get_wallet_balance(accountType="UNIFIED", coin="USDT")
-        coins = wallet['result']['list'][0]['coin']
-        for coin in coins:
-            if coin['coin'] == 'USDT':
-                return float(coin['walletBalance'])
-        return 0.0
+        response = session.get_wallet_balance(accountType="UNIFIED")
+        balance = response['result']['list'][0]['totalEquity']
+        return float(balance)
     except Exception as e:
-        print(f" Errore recupero wallet: {e}")
-        return 0.0
+        print(f" ⚠️ Errore recupero saldo Bybit: {e}")
+        return None
 
 def send_telegram_message(message):
-    """Invia un messaggio Telegram usando il bot token e chat ID configurati"""
+    """Invia un messaggio Telegram senza bloccare il bot in caso di errori"""
+    if not TELEGRAM_BOT_TOKEN or not CHAT_ID:
+        return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": message}
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {
-            'chat_id': CHAT_ID,
-            'text': message,
-            'parse_mode': 'HTML'
-        }
-        r = requests.post(url, data=payload, timeout=10)
-        if r.status_code == 200:
-            print(f" 📨 Messaggio Telegram inviato con successo.")
-        else:
-            print(f" ⚠️ Errore invio Telegram: {r.status_code} - {r.text}")
+        requests.post(url, json=payload, timeout=5)
     except Exception as e:
-        print(f" ⚠️ Eccezione nell'invio Telegram: {e}")
-
-def get_italian_time():
-    """Restituisce l'ora corrente in Italia (Europe/Rome) con timezone aware"""
-    tz = pytz.timezone('Europe/Rome')
-    return datetime.datetime.now(tz)
+        print(f" ⚠️ Errore invio Telegram: {e}")
 
 # ==============================================================================
 # AVVIO BOT E CICLO CONTINUO
 # ==============================================================================
-print(" 🤖 BOT GRID LEVA 1 (v8.7 - Rolling 24h Volatility & 3 Scaglioni)")
+print(" 🤖 BOT GRID LEVA 1 (v8.7 - Rolling 24h Volatility & 3 Scaglioni & Notifiche TG)")
 print(f" Strumento: {SYMBOL}")
 print(f"  -> MODALITÀ NORMALE: Size {QTY_LIVELLO_NORMALE}")
 print(f"  -> MODALITÀ ALTA VOLATILITÀ (> {SOGLIA_ALTA_VOLATILITA}%): Size {QTY_LIVELLO_ALTO} (Rientro < {RESET_DA_ALTO_A_NORMALE}%)")
@@ -207,8 +178,28 @@ while True:
         now = time.time()
         price = get_current_price()
         
+        # ==================== CONTROLLO NOTIFICHE TELEGRAM ====================
+        # Ottiene l'ora corrente nel fuso orario italiano
+        tz_italy = pytz.timezone('Europe/Rome')
+        now_italy = datetime.now(tz_italy)
+        current_hour = now_italy.hour
+
+        # Se sono le 6 o le 18, e non abbiamo ancora mandato il messaggio per quest'ora
+        if current_hour in (6, 18) and last_telegram_sent_hour != current_hour:
+            saldo = get_wallet_balance()
+            if saldo is not None:
+                msg = f"🏦 Report Saldo Wallet Bybit:\n💰 {saldo:.2f} USDT"
+                send_telegram_message(msg)
+                print(f" 📩 Inviato aggiornamento Telegram: {saldo:.2f} USDT")
+                last_telegram_sent_hour = current_hour
+
+        # Resetta il tracker delle notifiche durante le altre ore
+        if current_hour not in (6, 18):
+            last_telegram_sent_hour = None
+        # ======================================================================
+
         pos_data = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
-        pos_side = pos_data.get("side",None")
+        pos_side = pos_data.get("side", "None")
         raw_size = float(pos_data["size"])
 
         size = raw_size if (pos_side == "Buy" and raw_size > 0) else 0.0
@@ -263,4 +254,87 @@ while True:
         elif size == 0 and (now - last_trade_time > COOLDOWN):
             safe_price = price if price is not None else 0.0
             
-            # --- MACCHINA A STATI DELLA
+            daily_vol = get_daily_volatility()
+            
+            if daily_vol > SOGLIA_ESTREMA_VOLATILITA:
+                stato_rischio_attuale = "ESTREMO"
+            elif daily_vol > SOGLIA_ALTA_VOLATILITA and stato_rischio_attuale != "ESTREMO":
+                stato_rischio_attuale = "ALTO"
+            elif stato_rischio_attuale == "ESTREMO" and daily_vol < RESET_DA_ESTREMO_A_ALTO:
+                if daily_vol < RESET_DA_ALTO_A_NORMALE:
+                    stato_rischio_attuale = "NORMALE"
+                else:
+                    stato_rischio_attuale = "ALTO"    
+            elif stato_rischio_attuale == "ALTO" and daily_vol < RESET_DA_ALTO_A_NORMALE:
+                stato_rischio_attuale = "NORMALE"
+
+            if stato_rischio_attuale == "ESTREMO":
+                BASE_QTY = QTY_LIVELLO_ESTREMO
+                print(f" 🔥 [RISCHIO: ESTREMO] Volatilità 24h mobili al {daily_vol:.2f}% (Soglia > {SOGLIA_ESTREMA_VOLATILITA}%)")
+                print(f" 🛑 MASSIMA PROTEZIONE: Size impostata al minimo: {BASE_QTY} UAI.")
+            elif stato_rischio_attuale == "ALTO":
+                BASE_QTY = QTY_LIVELLO_ALTO
+                print(f" ⚠️ [RISCHIO: ALTO] Volatilità 24h mobili al {daily_vol:.2f}% (Soglia > {SOGLIA_ALTA_VOLATILITA}%)")
+                print(f" 📉 SIZE PROTETTA: Ridotta a {BASE_QTY} UAI.")
+            else:
+                BASE_QTY = QTY_LIVELLO_NORMALE
+                print(f" ✅ [RISCHIO: NORMALE] Volatilità 24h mobili regolare: {daily_vol:.2f}%.")
+                print(f" 📈 SIZE STANDARD: Utilizzo la quota intera di {BASE_QTY} UAI.")
+
+            MAX_TOTAL_QTY = round_qty(sum([BASE_QTY * m for m in GRID_MULTIPLIERS]))
+
+            print(f"\n 🛒 Avvio ciclo griglia 8 livelli @ {safe_price:.4f} (Max Qty Griglia: {MAX_TOTAL_QTY} UAI)")
+            cancel_all_orders()
+            time.sleep(1.0)
+
+            qty_livello_1 = round_qty(BASE_QTY * GRID_MULTIPLIERS[0])
+            
+            try:
+                session.place_order(category="linear", symbol=SYMBOL, side="Buy", orderType="Market", qty=str(qty_livello_1))
+                print(f" 🟢 [L1] Eseguito Market: {qty_livello_1} UAI")
+            except Exception as e:
+                print(f" [ERRORE CRITICO] Impossibile aprire ordine iniziale: {e}")
+                time.sleep(10)
+                continue
+
+            time.sleep(2.0) 
+            new_pos = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
+            avg = float(new_pos["avgPrice"])
+            
+            prezzo_inizio_griglia = avg 
+            prezzo_sl = round_price(prezzo_inizio_griglia * (1 - STOP_LOSS_PERCENT / 100))
+            print(f" 📌 Prezzo base impostato a: {prezzo_inizio_griglia:.5f}")
+            
+            try:
+                session.place_order(
+                    category="linear", symbol=SYMBOL, side="Sell", orderType="Market",       
+                    qty=str(MAX_TOTAL_QTY), triggerPrice=str(prezzo_sl),
+                    triggerBy="LastPrice", triggerDirection=2, reduceOnly=True           
+                )
+                print(f" 🛑 [STOP LOSS NATIVO] Inserito su Bybit a {prezzo_sl:.5f} per {MAX_TOTAL_QTY} UAI")
+            except Exception as sl_err:
+                print(f" ⚠️ Errore critico nell'inserimento dello Stop Loss nativo: {sl_err}")
+
+            accumulated_drop = 0
+            for i in range(1, len(GRID_MULTIPLIERS)):
+                accumulated_drop += GRID_SPACING[i]
+                entry_price = round_price(prezzo_inizio_griglia * (1 - accumulated_drop / 100))
+                qty_livello = round_qty(BASE_QTY * GRID_MULTIPLIERS[i])
+                
+                try:
+                    session.place_order(
+                        category="linear", symbol=SYMBOL, side="Buy",
+                        orderType="Limit", qty=str(qty_livello), price=str(entry_price)
+                    )
+                    print(f" 📥 [L{i+1}] Inserito Limit @ {entry_price:.5f} | Qty: {qty_livello} UAI | Drop: -{accumulated_drop:.1f}%")
+                except Exception as grid_err:
+                    print(f" ❌ Errore inserimento livello {i+1}: {grid_err}")
+            
+            last_trade_time = now
+            print(" ✅ Griglia configurata e attiva. Monitoraggio ordinario...")
+
+        time.sleep(2)
+
+    except Exception as e:
+        print(f" [ALLERTA SISTEMA] Errore nel ciclo continuo: {e}")
+        time.sleep(5)
