@@ -13,16 +13,16 @@ SYMBOL = "UAIUSDT"
 
 # Le tue 3 Size personalizzabili (Modificabili a mano in base al prezzo)
 QTY_LIVELLO_NORMALE = 100  # Size standard con mercato tranquillo
-QTY_LIVELLO_ALTO = 50     # Size ridotta con mercato nervoso
+QTY_LIVELLO_ALTO = 50      # Size ridotta con mercato nervoso
 QTY_LIVELLO_ESTREMO = 20   # Size minima di emergenza con mercato impazzito
 
 # SOGLE DI ATTIVAZIONE (In salita - Calcolate sulle 24 ore mobili)
-SOGLIA_ALTA_VOLATILITA = 25.0    # Sopra il 20%, passa a size 50
+SOGLIA_ALTA_VOLATILITA = 25.0     # Sopra il 20%, passa a size 50
 SOGLIA_ESTREMA_VOLATILITA = 50.0  # Sopra il 40%, passa a size 20
 
 # SOGLIE DI RIPRISTINO / RIENTRO (In discesa per evitare l'effetto altalena)
-RESET_DA_ALTO_A_NORMALE = 18.0   # Torna a 100 solo se scende sotto il 15%
-RESET_DA_ESTREMO_A_ALTO = 35.0   # Torna a 50 solo se scende sotto il 30%
+RESET_DA_ALTO_A_NORMALE = 18.0    # Torna a 100 solo se scende sotto il 15%
+RESET_DA_ESTREMO_A_ALTO = 35.0    # Torna a 50 solo se scende sotto il 30%
 
 # 8 Livelli: il bot moltiplicherà la tua BASE_QTY attuale per questi coefficienti
 GRID_MULTIPLIERS = [1, 1, 1.1, 1.3, 1.5, 2.4, 2.7, 2.9]
@@ -55,7 +55,7 @@ last_trade_time = 0
 last_tp_price = 0.0
 last_tp_update_time = 0
 prezzo_inizio_griglia = 0.0 
-last_telegram_sent_hour = None # Tracking per i messaggi Telegram
+last_telegram_sent_hour = None # Tracking per i messaggi Telegram programmati
 
 # Livello di rischio corrente: "NORMALE", "ALTO", "ESTREMO"
 stato_rischio_attuale = "NORMALE"  
@@ -166,19 +166,29 @@ def send_telegram_message(message):
 # ==============================================================================
 # AVVIO BOT E CICLO CONTINUO
 # ==============================================================================
-print(" 🤖 BOT GRID LEVA 1 (v8.7 - Rolling 24h Volatility & 3 Scaglioni & Notifiche TG)")
+print(" 🤖 BOT GRID LEVA 1 (v8.7 - Rolling 24h Volatility & Notifiche TG)")
 print(f" Strumento: {SYMBOL}")
 print(f"  -> MODALITÀ NORMALE: Size {QTY_LIVELLO_NORMALE}")
 print(f"  -> MODALITÀ ALTA VOLATILITÀ (> {SOGLIA_ALTA_VOLATILITA}%): Size {QTY_LIVELLO_ALTO} (Rientro < {RESET_DA_ALTO_A_NORMALE}%)")
 print(f"  -> MODALITÀ ESTREMA VOLATILITÀ (> {SOGLIA_ESTREMA_VOLATILITA}%): Size {QTY_LIVELLO_ESTREMO} (Rientro < {RESET_DA_ESTREMO_A_ALTO}%)")
 print(f" Stop Loss Fisso (Nativo): -{STOP_LOSS_PERCENT}%\n")
 
+# ---- MESSAGGIO TELEGRAM DI AVVIO ----
+saldo_iniziale = get_wallet_balance()
+if saldo_iniziale is not None:
+    msg_avvio = f"🚀 Bot Grid ({SYMBOL}) Avviato con successo!\n🏦 Saldo iniziale: {saldo_iniziale:.2f} USDT"
+else:
+    msg_avvio = f"🚀 Bot Grid ({SYMBOL}) Avviato!\n⚠️ Impossibile recuperare il saldo iniziale."
+send_telegram_message(msg_avvio)
+print(" 📩 Messaggio di avvio inviato su Telegram.")
+# -------------------------------------
+
 while True:
     try:
         now = time.time()
         price = get_current_price()
         
-        # ==================== CONTROLLO NOTIFICHE TELEGRAM ====================
+        # ==================== CONTROLLO NOTIFICHE TELEGRAM (6:00 e 18:00) ====================
         # Ottiene l'ora corrente nel fuso orario italiano
         tz_italy = pytz.timezone('Europe/Rome')
         now_italy = datetime.now(tz_italy)
@@ -196,7 +206,7 @@ while True:
         # Resetta il tracker delle notifiche durante le altre ore
         if current_hour not in (6, 18):
             last_telegram_sent_hour = None
-        # ======================================================================
+        # =====================================================================================
 
         pos_data = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
         pos_side = pos_data.get("side", "None")
