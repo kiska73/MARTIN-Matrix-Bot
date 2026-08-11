@@ -17,12 +17,12 @@ QTY_LIVELLO_ESTREMO = 20
 # Size minima di emergenza con mercato impazzito
 
 # SOGLE DI ATTIVAZIONE (In salita - Calcolate sulle 24 ore mobili)
-SOGLIA_ALTA_VOLATILITA = 25.0    # Sopra il 20%, passa a size 50
-SOGLIA_ESTREMA_VOLATILITA = 50.0  # Sopra il 40%, passa a size 20
+SOGLIA_ALTA_VOLATILITA = 25.0    # Sopra il 25%, passa a size 40
+SOGLIA_ESTREMA_VOLATILITA = 50.0  # Sopra il 50%, passa a size 20
 
 # SOGLIE DI RIPRISTINO / RIENTRO (In discesa per evitare l'effetto altalena)
-RESET_DA_ALTO_A_NORMALE = 18.0   # Torna a 100 solo se scende sotto il 15%
-RESET_DA_ESTREMO_A_ALTO = 35.0   # Torna a 50 solo se scende sotto il 30%
+RESET_DA_ALTO_A_NORMALE = 18.0   # Torna a 100 solo se scende sotto il 18%
+RESET_DA_ESTREMO_A_ALTO = 35.0   # Torna a 50 solo se scende sotto il 35%
 
 # 8 Livelli: il bot moltiplicherà la tua BASE_QTY attuale per questi coefficienti
 GRID_MULTIPLIERS = [1, 1, 1.1, 1.3, 1.5, 2.4, 2.7, 2.9]
@@ -213,7 +213,6 @@ while True:
         # ----------------------------------------------------------------------
         # 🔎 RIGA DI DEBUG (Utile per monitorare le attività silenziose)
         # ----------------------------------------------------------------------
-        print(f"🔎 DEBUG - Size in pancia: {size} | Prezzo: {price} | Cooldown terminato: {now - last_trade_time > COOLDOWN}")
 
         if size == 0:
             last_tp_price = 0.0
