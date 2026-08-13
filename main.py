@@ -13,10 +13,9 @@ SYMBOL = "UAIUSDT"
 # Le tue 3 Size personalizzabili (Modificabili a mano in base al prezzo)
 QTY_LIVELLO_NORMALE = 100  # Size standard con mercato tranquillo
 QTY_LIVELLO_ALTO = 40     # Size ridotta con mercato nervoso
-QTY_LIVELLO_ESTREMO = 20
-# Size minima di emergenza con mercato impazzito
+QTY_LIVELLO_ESTREMO = 20  # Size minima di emergenza con mercato impazzito
 
-# SOGLE DI ATTIVAZIONE (In salita - Calcolate sulle 24 ore mobili)
+# SOGLIE DI ATTIVAZIONE (In salita - Calcolate sulle 24 ore mobili)
 SOGLIA_ALTA_VOLATILITA = 25.0    # Sopra il 25%, passa a size 40
 SOGLIA_ESTREMA_VOLATILITA = 50.0  # Sopra il 50%, passa a size 20
 
@@ -194,6 +193,7 @@ while True:
         # ================================================================
 
         price = get_current_price()
+        time.sleep(0.3)  # <--- Micro-pausa per evitare Rate Limit (403)
         
         pos_data = session.get_positions(category="linear", symbol=SYMBOL)["result"]["list"][0]
         pos_side = pos_data.get("side", "None")
@@ -208,11 +208,8 @@ while True:
         avg_price = float(avg_price_str) if avg_price_str != "" else 0.0
         # -----------------------------------------
         
+        time.sleep(0.3)  # <--- Micro-pausa per evitare Rate Limit (403)
         active_orders = session.get_open_orders(category="linear", symbol=SYMBOL)["result"]["list"]
-
-        # ----------------------------------------------------------------------
-        # 🔎 RIGA DI DEBUG (Utile per monitorare le attività silenziose)
-        # ----------------------------------------------------------------------
 
         if size == 0:
             last_tp_price = 0.0
