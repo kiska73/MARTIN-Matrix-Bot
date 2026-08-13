@@ -140,7 +140,7 @@ def close_position():
             qty=str(abs(size)), reduceOnly=True
         )
         print(f" 💥 POSIZIONE CHIUSA A MERCATO | Size: {size} UAI")
-        time.sleep(1.0)
+        time.sleep(2)
         return True
     except Exception as e:
         print(f" Errore chiusura posizione: {e}")
@@ -298,7 +298,7 @@ while True:
 
             print(f"\n 🛒 Avvio ciclo griglia 8 livelli @ {safe_price:.4f} (Max Qty Griglia: {MAX_TOTAL_QTY} UAI)")
             cancel_all_orders()
-            time.sleep(1.0)
+            time.sleep(2)
 
             # Livello 1: Ordine a mercato immediato
             qty_livello_1 = round_qty(BASE_QTY * GRID_MULTIPLIERS[0])
@@ -348,7 +348,7 @@ while True:
             last_trade_time = now
             print(" ✅ Griglia configurata e attiva. Monitoraggio ordinario...")
 
-        time.sleep(2)
+        time.sleep(5)
 
     except Exception as e:
         print(f" [ALLERTA SISTEMA] Errore nel ciclo continuo: {e}")
