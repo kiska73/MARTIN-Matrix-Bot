@@ -349,4 +349,4 @@ while True:
 
     except Exception as e:
         print(f" [ALLERTA SISTEMA] Errore nel ciclo continuo: {e}")
-        time.sleep(5)
+        time.sleep(15)
