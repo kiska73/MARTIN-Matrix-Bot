@@ -10,18 +10,8 @@ from pybit.unified_trading import HTTP
 # ==============================================================================
 SYMBOL = "UAIUSDT"
 
-# Le tue 3 Size personalizzabili (Modificabili a mano in base al prezzo)
-QTY_LIVELLO_NORMALE = 50  # Size standard con mercato tranquillo
-QTY_LIVELLO_ALTO = 50     # Size ridotta con mercato nervoso
-QTY_LIVELLO_ESTREMO = 20  # Size minima di emergenza con mercato impazzito
-
-# SOGLIE DI ATTIVAZIONE (In salita - Calcolate sulle 24 ore mobili)
-SOGLIA_ALTA_VOLATILITA = 25.0    # Sopra il 25%, passa a size 40
-SOGLIA_ESTREMA_VOLATILITA = 50.0  # Sopra il 50%, passa a size 20
-
-# SOGLIE DI RIPRISTINO / RIENTRO (In discesa per evitare l'effetto altalena)
-RESET_DA_ALTO_A_NORMALE = 18.0   # Torna a 100 solo se scende sotto il 18%
-RESET_DA_ESTREMO_A_ALTO = 35.0   # Torna a 50 solo se scende sotto il 35%
+# Size unica (modificabile a mano in base al mercato)
+QTY_LIVELLO_NORMALE = 50
 
 # 8 Livelli: il bot moltiplicherà la tua BASE_QTY attuale per questi coefficienti
 GRID_MULTIPLIERS = [1, 1, 1.1, 1.3, 1.5, 2.4, 2.7, 2.9]
@@ -51,9 +41,7 @@ last_tp_price = 0.0
 last_tp_update_time = 0
 prezzo_inizio_griglia = 0.0 
 
-# Livello di rischio corrente: "NORMALE", "ALTO", "ESTREMO"
-stato_rischio_attuale = "NORMALE"  
-BASE_QTY = QTY_LIVELLO_NORMALE   # Inizializzazione iniziale
+BASE_QTY = QTY_LIVELLO_NORMALE   # Size fissa
 
 # Variabili per gestire il controllo del saldo orario (NO TELEGRAM)
 ultimo_orario_saldo = -1
@@ -169,11 +157,9 @@ def stampa_saldo_conto():
 # ==============================================================================
 # AVVIO BOT E CICLO CONTINUO
 # ==============================================================================
-print(" 🤖 BOT GRID LEVA 1 (v8.7 - Rolling 24h Volatility & 3 Scaglioni + Log Saldo)")
+print(" 🤖 BOT GRID LEVA 1 (v8.7 - Size Fissa + Log Saldo)")
 print(f" Strumento: {SYMBOL}")
-print(f"  -> MODALITÀ NORMALE: Size {QTY_LIVELLO_NORMALE}")
-print(f"  -> MODALITÀ ALTA VOLATILITÀ (> {SOGLIA_ALTA_VOLATILITA}%): Size {QTY_LIVELLO_ALTO} (Rientro < {RESET_DA_ALTO_A_NORMALE}%)")
-print(f"  -> MODALITÀ ESTREMA VOLATILITÀ (> {SOGLIA_ESTREMA_VOLATILITA}%): Size {QTY_LIVELLO_ESTREMO} (Rientro < {RESET_DA_ESTREMO_A_ALTO}%)")
+print(f"  -> SIZE FISSA: {QTY_LIVELLO_NORMALE} UAI")
 print(f" Stop Loss Fisso (Nativo): -{STOP_LOSS_PERCENT}%\n")
 
 while True:
@@ -258,38 +244,9 @@ while True:
         elif size == 0 and (now - last_trade_time > COOLDOWN):
             safe_price = price if price is not None else 0.0
             
-            # --- MACCHINA A STATI DELLA VOLATILITÀ (CON FINESTRA ROLLING 24H) ---
-            daily_vol = get_daily_volatility()
-            
-            # 1. VALUTAZIONE IN SALITA 
-            if daily_vol > SOGLIA_ESTREMA_VOLATILITA:
-                stato_rischio_attuale = "ESTREMO"
-            elif daily_vol > SOGLIA_ALTA_VOLATILITA and stato_rischio_attuale != "ESTREMO":
-                stato_rischio_attuale = "ALTO"
-            
-            # 2. VALUTAZIONE IN DISCESA 
-            elif stato_rischio_attuale == "ESTREMO" and daily_vol < RESET_DA_ESTREMO_A_ALTO:
-                if daily_vol < RESET_DA_ALTO_A_NORMALE:
-                    stato_rischio_attuale = "NORMALE" 
-                else:
-                    stato_rischio_attuale = "ALTO"    
-                    
-            elif stato_rischio_attuale == "ALTO" and daily_vol < RESET_DA_ALTO_A_NORMALE:
-                stato_rischio_attuale = "NORMALE"
-
-            # 3. ASSEGNAZIONE DELLE QUANTITÀ 
-            if stato_rischio_attuale == "ESTREMO":
-                BASE_QTY = QTY_LIVELLO_ESTREMO
-                print(f" 🔥 [RISCHIO: ESTREMO] Volatilità 24h mobili al {daily_vol:.2f}% (Soglia > {SOGLIA_ESTREMA_VOLATILITA}%)")
-                print(f" 🛑 MASSIMA PROTEZIONE: Size impostata al minimo: {BASE_QTY} UAI.")
-            elif stato_rischio_attuale == "ALTO":
-                BASE_QTY = QTY_LIVELLO_ALTO
-                print(f" ⚠️ [RISCHIO: ALTO] Volatilità 24h mobili al {daily_vol:.2f}% (Soglia > {SOGLIA_ALTA_VOLATILITA}%)")
-                print(f" 📉 SIZE PROTETTA: Ridotta a {BASE_QTY} UAI.")
-            else:
-                BASE_QTY = QTY_LIVELLO_NORMALE
-                print(f" ✅ [RISCHIO: NORMALE] Volatilità 24h mobili regolare: {daily_vol:.2f}%.")
-                print(f" 📈 SIZE STANDARD: Utilizzo la quota intera di {BASE_QTY} UAI.")
+            # Size fissa (modificabile a mano cambiando QTY_LIVELLO_NORMALE)
+            BASE_QTY = QTY_LIVELLO_NORMALE
+            print(f" ✅ Size fissa: {BASE_QTY} UAI")
 
             MAX_TOTAL_QTY = round_qty(sum([BASE_QTY * m for m in GRID_MULTIPLIERS]))
 
