@@ -11,7 +11,7 @@ from pybit.unified_trading import HTTP
 SYMBOL = "UAIUSDT"
 
 # Size unica (modificabile a mano in base al mercato)
-QTY_LIVELLO_NORMALE = 50
+QTY_LIVELLO_NORMALE = 100
 
 # 8 Livelli: il bot moltiplicherà la tua BASE_QTY attuale per questi coefficienti
 GRID_MULTIPLIERS = [1, 1, 1.1, 1.3, 1.5, 2.4, 2.7, 2.9]
