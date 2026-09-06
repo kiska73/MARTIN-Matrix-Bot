@@ -137,11 +137,11 @@ while True:
         ora_attuale_italia = datetime.now(FUSO_ORARIO_ITALIA)
         ora = ora_attuale_italia.hour
         
-        if ora in (6, 12, 18) and ora != ultimo_orario_saldo:
+        if ora in (6, 10, 14, 18, 22) and ora != ultimo_orario_saldo:
             stampa_saldo_conto()
             ultimo_orario_saldo = ora  
             
-        if ora not in (6, 12, 18):
+        if ora not in (6, 10, 14, 18, 22):
             ultimo_orario_saldo = -1
         # ================================================================
 
