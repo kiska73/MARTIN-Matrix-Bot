@@ -65,39 +65,6 @@ def round_qty(qty):
         return int(round(qty))
     return round(qty, QTY_DECIMALS)
 
-def get_daily_volatility():
-    """
-    Scarica le ultime 24 candele orarie (1H) per calcolare la volatilità 
-    reale delle ultime 24 ore mobili, evitando il reset di mezzanotte.
-    """
-    try:
-        kline_data = session.get_kline(
-            category="linear",
-            symbol=SYMBOL,
-            interval="60", # 60 minuti = 1 ora
-            limit=24       # Prende le ultime 24 ore
-        )["result"]["list"]
-        
-        if not kline_data:
-            return 0.0
-            
-        # Estraiamo i prezzi di High e Low da tutte le 24 candele
-        highs = [float(candle[2]) for candle in kline_data]
-        lows = [float(candle[3]) for candle in kline_data]
-        
-        # Il prezzo di apertura di 24 ore fa
-        open_24h_ago = float(kline_data[-1][1]) 
-        
-        max_high = max(highs)
-        min_low = min(lows)
-        
-        # Formula della volatilità mobile sulle 24 ore
-        volatility = ((max_high - min_low) / open_24h_ago) * 100
-        return volatility
-    except Exception as e:
-        print(f" ⚠️ Errore nel recupero della volatilità Rolling 24h: {e}")
-        return 0.0
-
 def cancel_all_orders():
     try:
         session.cancel_all_orders(category="linear", symbol=SYMBOL)
@@ -170,11 +137,11 @@ while True:
         ora_attuale_italia = datetime.now(FUSO_ORARIO_ITALIA)
         ora = ora_attuale_italia.hour
         
-        if ora in (6, 18) and ora != ultimo_orario_saldo:
+        if ora in (6, 12, 18) and ora != ultimo_orario_saldo:
             stampa_saldo_conto()
             ultimo_orario_saldo = ora  
             
-        if ora not in (6, 18):
+        if ora not in (6, 12, 18):
             ultimo_orario_saldo = -1
         # ================================================================
 
